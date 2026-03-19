@@ -16,7 +16,7 @@ import pandas as pd
 import matplotlib.dates as mdates
 
 # Categories are ["Timestamp", "SHT_Temperature_C",  "MCP_Temperature_C", "HDC_Temperature_C", "SHT_Relative_Humidity", "HDC_Relative_Humidity"]
-temps=pd.read_csv('data_thanksgiving.csv')
+temps=pd.read_csv('data_frosty.csv')
 temps['Timestamp'] = pd.to_datetime(temps['Timestamp'])
 df = temps.set_index('Timestamp').resample('1min').mean()
 
@@ -37,10 +37,10 @@ ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
 ax.grid(which='major', color='black', linewidth=1.2)   # Big grid lines
 ax.grid(which='minor', color='gray', linestyle='--', linewidth=0.6)  # Small grid lines
 
-plt.title('Thanksgiving Humidity Over Time (resampled to the minute mean)')
+plt.title('Frosty Humidity Over Time (resampled to the minute mean)')
 plt.xlabel('Date')
 plt.ylabel('Relative Humidity (%)')
 plt.tight_layout()
 
-plt.savefig('thankgsiving_humidity_overtime.png')
+plt.savefig('frosty_humidity_overtime.png')
 plt.show()
