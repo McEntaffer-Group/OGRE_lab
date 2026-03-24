@@ -15,13 +15,18 @@ import pathlib
 import pandas as pd
 import matplotlib.dates as mdates
 
-temps=pd.read_csv('temperature_log.csv')
+# Categories are ["Timestamp", "SHT_Temperature_C",  "MCP_Temperature_C", "HDC_Temperature_C", "SHT_Relative_Humidity", "HDC_Relative_Humidity"]
+temps=pd.read_csv('data_frosty.csv')
 temps['Timestamp'] = pd.to_datetime(temps['Timestamp'])
 df = temps.set_index('Timestamp').resample('1min').mean()
 
 [fig, ax] = plt.subplots(figsize=(12, 6))
 
-ax.plot(df.index, df['Temperature_C']*9/5+32, color='blue', linewidth=0.8)
+ax.plot(df.index, df['SHT_Temperature_C']*9/5+32, color='blue', linewidth=0.8)
+ax.plot(df.index, df['MCP_Temperature_C']*9/5+32, color='green', linewidth=0.8)
+ax.plot(df.index, df['HDC_Temperature_C']*9/5+32, color='orange', linewidth=0.8)
+# ax.plot(df.index, df['SHT_Relative_Humidity'], color='teal', linewidth=0.8)
+# ax.plot(df.index, df['HDC_Relative_Humidity'], color='purple', linewidth=0.8)
 
 # Format x-axis
 ax.xaxis.set_major_locator(mdates.DayLocator())        # Big ticks at midnight
@@ -32,10 +37,10 @@ ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
 ax.grid(which='major', color='black', linewidth=1.2)   # Big grid lines
 ax.grid(which='minor', color='gray', linestyle='--', linewidth=0.6)  # Small grid lines
 
-plt.title('Temperature Over Time')
+plt.title('Frosty Temperature Over Time (resampled to the minute mean)')
 plt.xlabel('Date')
 plt.ylabel('Temperature (°F)')
 plt.tight_layout()
 
-plt.savefig('temperature_overtime.png')
+plt.savefig('frosty_temperature_overtime.png')
 plt.show()

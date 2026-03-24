@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 source_folder = pathlib.Path(r"D:\Reverse Telescope Test\accel\Session_2025-10-29_163326")
 csv_files = glob.glob(str(source_folder / "*.csv"))
 try :
-    df_list = [pd.read_csv(f) for f in csv_files[0:50]] # 50 files will eat up about 8 gigs of ram
+    df_list = [pd.read_csv(f) for f in csv_files[0:10]] # 50 files will eat up about 8 gigs of ram
     df = pd.concat(df_list, ignore_index=True)
 except MemoryError as e:
     print("Memory error, you may have too much data.")
@@ -28,10 +28,10 @@ except Exception as e :
 
 
 t = df['RelativeTime_s'].values
-ax = df['Mirror_X_g'].values * 10 # accel output from matlab is in g's. g = 386.1 inches/sec^2 For now just get raw V
-ay = df['Mirror_Y_g'].values * 10
-az = df['Mirror_Z_g'].values * 10
-aarm = df['Desk_Y_g'].values * 10
+ax = df['Mirror_X_g'].values - df['Mirror_X_g'].median() # accel output from matlab is in g's. g = 386.1 inches/sec^2 For now just get raw V
+ay = df['Mirror_Y_g'].values - df['Mirror_Y_g'].median()
+az = df['Mirror_Z_g'].values - df['Mirror_Y_g'].median()
+aarm = df['Desk_Y_g'].values - df['Desk_Y_g'].median()
 
 def plotaccels(
         t: np.ndarray[Any, np.dtype[np.floating[Any]]],
@@ -53,6 +53,7 @@ def plotaccels(
     else:
         plt.plot(t, a, label=f'{axis} Acceleration (V)')
     if not suppressVelocity :
+        # Need to try to detrend the drift in velocity?
         v = cumulative_simpson(y=a, x=t, initial=0)
         plt.plot(t, v, label=f'{axis} Velocity (in/s)')
     if not suppressPosition:
@@ -66,10 +67,10 @@ def plotaccels(
 
     return v, p
 
-vx, px = plotaccels(t, ax, "X", suppressPosition=True, suppressVelocity=True)
-vy, py = plotaccels(t, ay, "Y", suppressPosition=True, suppressVelocity=True)
-vz, pz = plotaccels(t, az, "Z", suppressPosition=True, suppressVelocity=True)
-varm, parm = plotaccels(t, aarm, "Desk Y", suppressPosition=True, suppressVelocity=True)
+vx, px = plotaccels(t, ax, "X", suppressPosition=True, suppressVelocity=False)
+vy, py = plotaccels(t, ay, "Y", suppressPosition=True, suppressVelocity=False)
+vz, pz = plotaccels(t, az, "Z", suppressPosition=True, suppressVelocity=False)
+varm, parm = plotaccels(t, aarm, "Desk Y", suppressPosition=True, suppressVelocity=False)
 #
 # # Integration using Runge-Kutta (solve_ivp)
 # # Interpolation for acceleration
