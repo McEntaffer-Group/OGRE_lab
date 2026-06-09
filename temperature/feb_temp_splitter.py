@@ -8,16 +8,16 @@
 import pandas as pd
 
 # --- inputs ---
-input_csv = "temperature_log_late_feb.csv"
-output_csv_thanksgiving = "data_morewarming.csv"
-output_csv_snowday = "data_hotandcold.csv"
-output_csv_lowhumidity = "data_secondarylaser.csv"
+input_csv = "temperature_log_end_march.csv"
+output_csv_thanksgiving = "data_end_march_cut.csv"
+output_csv_snowday = "data_earliest_april.csv"
+output_csv_lowhumidity = "data_early_april.csv"
 common_header = "Timestamp,SHT_Temperature_C,MCP_Temperature_C,HDC_Temperature_C,SHT_Relative_Humidity,HDC_Relative_Humidity"
 columns = common_header.split(',')
 # sample line: 2025-11-25 11:20:52,21.57,21.31,23.0,26.35,31.87
 
-split_time_str1 = "2026-02-19 16:18:00"  # your split point
-split_time_str2 = "2026-03-02 15:48:52"  # your split point
+split_time_str1 = "2026-04-01 00:00:00"  # your split point
+split_time_str2 = "2026-04-07 00:00:00"  # your split point
 
 # Read CSV and parse the first column as datetime
 # Adjust 'parse_dates=[0]' if the datetime column isn't the first, e.g., use ['timestamp'] for a named column.
