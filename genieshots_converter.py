@@ -50,7 +50,7 @@ def png_to_fits(png_path, fits_path):
         if img.mode not in ("I", "F", "L"):
             img = img.convert("L")
 
-        data = np.array(img, dtype=np.float32)
+        data = np.array(img)
 
     hdu = fits.PrimaryHDU(data)
     hdul = fits.HDUList([hdu])
@@ -60,11 +60,11 @@ def png_to_fits(png_path, fits_path):
     hdul.writeto(fits_path, overwrite=True)
 
 
-def build_output_name(index, timestamp_str):
+def build_output_name(index, timestamp_str, runname):
     """
     Build output filename like: image0001 26-03-02 17-04-30.fits
     """
-    return f"image{index:04d} {timestamp_str}.fits"
+    return f"{runname}_{index:04d} {timestamp_str}.fits"
 
 def infer_dest_dir_from_source(source_dir: Path) -> Path:
     """
@@ -150,7 +150,7 @@ def convert_folder(
             ts_str = format_timestamp(mtime)
 
             # Build output filename and path
-            out_name = build_output_name(idx, ts_str)
+            out_name = build_output_name(idx, ts_str, run_name)
             fits_path = dest_dir / out_name
 
             # Logging line (matches your BMP log style)
@@ -173,7 +173,7 @@ def convert_folder(
 
 if __name__ == "__main__":
     # Adjust these paths as needed; raw strings avoid backslash-escape issues
-    source = r"E:\Reverse Telescope Test Data\20260302\genieshots"
+    source = (r"E:\Reverse Telescope Test Data\20260306\springgenie")
     # dest = r"E:\Reverse Telescope Test Data\20260302_data\genieshots\genieshots_fits"
 
     # First run as dry-run to check naming without writing files:
