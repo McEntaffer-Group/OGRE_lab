@@ -173,7 +173,7 @@ def convert_folder(
 
 if __name__ == "__main__":
     # Adjust these paths as needed; raw strings avoid backslash-escape issues
-    source = r"C:\Users\jad507\OneDrive - The Pennsylvania State University\Pictures\Reverse Telescope Test\20260420\zoeysecondarygenie"
+    source = (r"E:\Reverse Telescope Test Data\20260306\springgenie")
     # dest = r"E:\Reverse Telescope Test Data\20260302_data\genieshots\genieshots_fits"
 
     # First run as dry-run to check naming without writing files:

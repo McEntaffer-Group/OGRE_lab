@@ -49,7 +49,7 @@ ENABLE_AUTOSTART = False # Not yet implemented
 SHT45_ENABLED = True
 MCP9808_ENABLED = True
 HDC3022_ENABLED = True
-LOG_FILE = "temperature_log_mid_april.csv"
+LOG_FILE = "temperature_log_midlate_april.csv"
 
 class DisabledSensor:
     @property
