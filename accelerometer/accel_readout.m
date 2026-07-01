@@ -7,8 +7,8 @@ function accel_readout()
     %% MATLAB-COMPLIANT CONFIGURATION
     CONFIG = struct();
     CONFIG.channels = [17, 18, 19, 20];
-    CONFIG.channel_names = {'Cass_Y', 'Cass_X', 'Cass_Z', 'Desk_Y'};
-    CONFIG.sample_rate = 1000;
+    CONFIG.channel_names = {'Mirror_Y', 'Mirror_X', 'Mirror_Z', 'Desk_Y'};
+    CONFIG.sample_rate = 200;
     CONFIG.hardware_gain = 100; % signal conditions gain set to 100
     CONFIG.sensitivity = 0.1; % 100mV/g
     
