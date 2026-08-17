@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+warming,5191,25-12-17 08-45-55,25-12-21 14-29-32,"warming weather, increased humidity",0.016666666666666666,2.0936962958543885,2.447044201389848,-15.479764208052966,4.313686232706341,58.53487986134674,0.9002315582362703,57.696069619416924,0.873403913846647
