@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(where python *)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe *)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" -m pip list)",
+      "Bash(\"C:\\\\Users\\\\jad507\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -m pip list)",
+      "Bash(\"C:\\\\Python314\\\\python.exe\" -m pip list)",
+      "Bash(where jupyter *)",
+      "Bash(jupyter kernelspec *)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" -m pip install astropy pandas)",
+      "Bash('D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe' -c ' *)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" fits_reprocess.py --dry-run)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" fits_reprocess.py --run genieshots)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" fits_reprocess.py --run genieshots --force)",
+      "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" -u fits_reprocess.py --run zoeysecondarygenie)",
+      "Bash(git rev-list *)"
+    ]
+  }
+}

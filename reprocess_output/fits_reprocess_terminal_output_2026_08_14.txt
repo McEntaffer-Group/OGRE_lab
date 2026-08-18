@@ -1,0 +1,742 @@
+(.venv) PS D:\Users\jad507\PycharmProjects\OGRE_lab> python .\fits_reprocess.py
+Discovered 52 FITS run(s) and 40 image run(s) under E:\Reverse Telescope Test Data.
+[1/92] FITS  20250919_data/weekend
+  -> weekend: 3966 FITS files, camera=main_camera
+    1000/3966  (5 f/s, eta 10.9 min)
+    2000/3966  (7 f/s, eta 4.5 min)
+    3000/3966  (6 f/s, eta 2.5 min)
+  -- 3966/3966 ok in 691.4s (6 f/s)
+[2/92] FITS  20250922_data/minutely
+  -> minutely: 288 FITS files, camera=main_camera
+  -- 288/288 ok in 63.5s (5 f/s)
+[3/92] FITS  20250922_data/morning5237
+  -> morning5237: 9445 FITS files, camera=main_camera
+    1000/9445  (5 f/s, eta 30.1 min)
+    2000/9445  (5 f/s, eta 25.0 min)
+    3000/9445  (5 f/s, eta 21.4 min)
+    4000/9445  (5 f/s, eta 18.2 min)
+    5000/9445  (5 f/s, eta 15.0 min)
+    6000/9445  (5 f/s, eta 11.7 min)
+    7000/9445  (5 f/s, eta 8.3 min)
+    8000/9445  (5 f/s, eta 4.9 min)
+    9000/9445  (5 f/s, eta 1.5 min)
+  -- 9445/9445 ok in 1931.0s (5 f/s)
+[4/92] FITS  20250923_data/bigshakeA
+  -> bigshakeA: 9373 FITS files, camera=main_camera
+    1000/9373  (4 f/s, eta 35.6 min)
+    2000/9373  (4 f/s, eta 29.0 min)
+    3000/9373  (4 f/s, eta 25.7 min)
+    4000/9373  (4 f/s, eta 21.6 min)
+    5000/9373  (4 f/s, eta 17.6 min)
+    6000/9373  (4 f/s, eta 13.6 min)
+    7000/9373  (4 f/s, eta 9.6 min)
+    8000/9373  (4 f/s, eta 5.6 min)
+    9000/9373  (4 f/s, eta 1.5 min)
+  -- 9373/9373 ok in 2315.2s (4 f/s)
+[5/92] FITS  20250923_data/bigshakeB
+  -> bigshakeB: 3542 FITS files, camera=main_camera
+    1000/3542  (4 f/s, eta 10.8 min)
+    2000/3542  (4 f/s, eta 6.3 min)
+    3000/3542  (4 f/s, eta 2.3 min)
+  -- 3542/3542 ok in 908.8s (4 f/s)
+[6/92] FITS  20250923_data/fanoff
+  -> fanoff: 9355 FITS files, camera=main_camera
+    1000/9355  (3 f/s, eta 42.8 min)
+    2000/9355  (3 f/s, eta 36.5 min)
+    3000/9355  (3 f/s, eta 31.4 min)
+    4000/9355  (3 f/s, eta 26.4 min)
+    5000/9355  (3 f/s, eta 21.7 min)
+    6000/9355  (3 f/s, eta 16.7 min)
+    7000/9355  (3 f/s, eta 11.8 min)
+    8000/9355  (3 f/s, eta 6.8 min)
+    9000/9355  (3 f/s, eta 1.8 min)
+  -- 9355/9355 ok in 2834.0s (3 f/s)
+[7/92] FITS  20250923_data/minutely
+  -> minutely: 195 FITS files, camera=main_camera
+  -- 195/195 ok in 62.4s (3 f/s)
+[8/92] FITS  20250923_data/minutely2
+  -> minutely2: 1176 FITS files, camera=main_camera
+    1000/1176  (3 f/s, eta 0.9 min)
+  -- 1176/1176 ok in 360.5s (3 f/s)
+[9/92] FITS  20250923_data/stabilitytestA
+  -> stabilitytestA: 3054 FITS files, camera=main_camera
+    1000/3054  (38 f/s, eta 0.9 min)
+    2000/3054  (41 f/s, eta 0.4 min)
+    3000/3054  (40 f/s, eta 0.0 min)
+  -- 3054/3054 ok in 77.0s (40 f/s)
+[10/92] FITS  20250923_data/stabilitytestB
+  -> stabilitytestB: 3061 FITS files, camera=main_camera
+    1000/3061  (3 f/s, eta 10.0 min)
+    2000/3061  (3 f/s, eta 5.1 min)
+    3000/3061  (4 f/s, eta 0.3 min)
+  -- 3061/3061 ok in 859.7s (4 f/s)
+[11/92] FITS  20250924_data/PostNate
+  -> PostNate: 1187 FITS files, camera=main_camera
+    1000/1187  (5 f/s, eta 0.6 min)
+  -- 1187/1187 ok in 242.6s (5 f/s)
+[12/92] FITS  20250929_data/fanoff5237
+  -> fanoff5237: 8799 FITS files, camera=main_camera
+    1000/8799  (3 f/s, eta 47.6 min)
+    2000/8799  (3 f/s, eta 40.9 min)
+    3000/8799  (3 f/s, eta 34.8 min)
+    4000/8799  (3 f/s, eta 28.8 min)
+    5000/8799  (3 f/s, eta 22.8 min)
+    6000/8799  (3 f/s, eta 16.7 min)
+    7000/8799  (3 f/s, eta 10.7 min)
+    8000/8799  (3 f/s, eta 4.8 min)
+  -- 8799/8799 ok in 3148.4s (3 f/s)
+[13/92] FITS  20250929_data/morning5237
+  -> morning5237: 8458 FITS files, camera=main_camera
+    1000/8458  (3 f/s, eta 46.1 min)
+    2000/8458  (3 f/s, eta 39.3 min)
+    3000/8458  (3 f/s, eta 32.6 min)
+    4000/8458  (3 f/s, eta 26.6 min)
+    5000/8458  (3 f/s, eta 20.5 min)
+    6000/8458  (3 f/s, eta 14.6 min)
+    7000/8458  (3 f/s, eta 8.6 min)
+    8000/8458  (3 f/s, eta 2.7 min)
+  -- 8458/8458 ok in 3004.4s (3 f/s)
+[14/92] FITS  20251027_data/night5237
+  -> night5237: 9425 FITS files, camera=main_camera
+    1000/9425  (29 f/s, eta 4.9 min)
+    2000/9425  (33 f/s, eta 3.8 min)
+    3000/9425  (33 f/s, eta 3.2 min)
+    4000/9425  (35 f/s, eta 2.6 min)
+    5000/9425  (35 f/s, eta 2.1 min)
+    6000/9425  (35 f/s, eta 1.6 min)
+    7000/9425  (35 f/s, eta 1.2 min)
+    8000/9425  (35 f/s, eta 0.7 min)
+    9000/9425  (36 f/s, eta 0.2 min)
+  -- 9425/9425 ok in 266.7s (35 f/s)
+[15/92] FITS  20251027_data/overnight
+  -> overnight: 1099 FITS files, camera=main_camera
+    1000/1099  (40 f/s, eta 0.0 min)
+  -- 1099/1099 ok in 31.6s (35 f/s)
+[16/92] FITS  20251029_data/longweekend
+  -> longweekend: 6970 FITS files, camera=main_camera
+    1000/6970  (2 f/s, eta 48.5 min)
+    2000/6970  (3 f/s, eta 24.2 min)
+    3000/6970  (4 f/s, eta 15.0 min)
+    4000/6970  (5 f/s, eta 9.8 min)
+    5000/6970  (6 f/s, eta 5.8 min)
+    6000/6970  (6 f/s, eta 2.6 min)
+  -- 3556/6970 ok in 1072.6s (6 f/s)
+[17/92] FITS  20251029_data/newcomp
+  -> newcomp: 9577 FITS files, camera=main_camera
+    1000/9577  (34 f/s, eta 4.3 min)
+    2000/9577  (37 f/s, eta 3.4 min)
+    3000/9577  (38 f/s, eta 2.9 min)
+    4000/9577  (38 f/s, eta 2.4 min)
+    5000/9577  (39 f/s, eta 2.0 min)
+    6000/9577  (39 f/s, eta 1.5 min)
+    7000/9577  (40 f/s, eta 1.1 min)
+    8000/9577  (40 f/s, eta 0.7 min)
+    9000/9577  (39 f/s, eta 0.2 min)
+  -- 9577/9577 ok in 243.3s (39 f/s)
+[18/92] FITS  20251105_data/overnight
+  -> overnight: 1090 FITS files, camera=main_camera
+    1000/1090  (2 f/s, eta 0.8 min)
+  -- 353/1090 ok in 566.1s (2 f/s)
+[19/92] FITS  20251106_data/laser
+  -> laser: 5063 FITS files, camera=main_camera
+    1000/5063  (36 f/s, eta 1.9 min)
+    2000/5063  (41 f/s, eta 1.3 min)
+    3000/5063  (42 f/s, eta 0.8 min)
+    4000/5063  (42 f/s, eta 0.4 min)
+    5000/5063  (41 f/s, eta 0.0 min)
+  -- 5063/5063 ok in 134.2s (38 f/s)
+[20/92] FITS  20251107_data/laserdaytest
+  -> laserdaytest: 205 FITS files, camera=main_camera
+  -- 205/205 ok in 9.6s (21 f/s)
+[21/92] FITS  20251107_data/laserweekend
+  -> laserweekend: 3995 FITS files, camera=main_camera
+    1000/3995  (2 f/s, eta 26.6 min)
+    2000/3995  (1 f/s, eta 23.0 min)
+    3000/3995  (1 f/s, eta 12.4 min)
+  -- 3007/3995 ok in 3071.5s (1 f/s)
+[22/92] FITS  20251114_data/fansoff
+  -> fansoff: 3991 FITS files, camera=main_camera
+    1000/3991  (1 f/s, eta 39.2 min)
+    2000/3991  (1 f/s, eta 26.9 min)
+    3000/3991  (1 f/s, eta 12.9 min)
+  -- 1800/3991 ok in 3088.3s (1 f/s)
+[23/92] FITS  20251117_data/lasersimultaneous
+  -> lasersimultaneous: 994 FITS files, camera=main_camera
+  -- 994/994 ok in 171.6s (6 f/s)
+[24/92] FITS  20251118_data/lasermirror
+  -> lasermirror: 2726 FITS files, camera=main_camera
+    1000/2726  (5 f/s, eta 5.5 min)
+    2000/2726  (5 f/s, eta 2.4 min)
+  -- 2726/2726 ok in 513.6s (5 f/s)
+[25/92] FITS  20251120_data/pumpsoff
+  -> pumpsoff: 5600 FITS files, camera=main_camera
+    1000/5600  (6 f/s, eta 13.8 min)
+    2000/5600  (5 f/s, eta 11.1 min)
+    3000/5600  (5 f/s, eta 8.3 min)
+    4000/5600  (5 f/s, eta 4.9 min)
+    5000/5600  (5 f/s, eta 1.8 min)
+  -- 5600/5600 ok in 1023.9s (5 f/s)
+[26/92] FITS  20251124_data/prethanksgiving
+  -> prethanksgiving: 1083 FITS files, camera=main_camera
+    1000/1083  (13 f/s, eta 0.1 min)
+  -- 1083/1083 ok in 84.8s (13 f/s)
+[27/92] FITS  20251125_data/thanksgiving
+  -> thanksgiving: 8557 FITS files, camera=main_camera
+    1000/8557  (5 f/s, eta 23.8 min)
+    2000/8557  (6 f/s, eta 19.8 min)
+    3000/8557  (6 f/s, eta 16.3 min)
+    4000/8557  (6 f/s, eta 13.2 min)
+    5000/8557  (6 f/s, eta 10.4 min)
+    6000/8557  (6 f/s, eta 7.4 min)
+    7000/8557  (6 f/s, eta 4.5 min)
+    8000/8557  (6 f/s, eta 1.6 min)
+  -- 8557/8557 ok in 1494.1s (6 f/s)
+[28/92] FITS  20251201_data/snowday
+  -> snowday: 2449 FITS files, camera=main_camera
+    1000/2449  (5 f/s, eta 5.0 min)
+    2000/2449  (5 f/s, eta 1.4 min)
+  -- 2449/2449 ok in 452.9s (5 f/s)
+[29/92] FITS  20251205_data/lowhumidity
+  -> lowhumidity: 7156 FITS files, camera=main_camera
+    1000/7156  (5 f/s, eta 19.2 min)
+    2000/7156  (5 f/s, eta 16.4 min)
+    3000/7156  (5 f/s, eta 12.8 min)
+    4000/7156  (5 f/s, eta 9.7 min)
+    5000/7156  (5 f/s, eta 6.5 min)
+    6000/7156  (5 f/s, eta 3.5 min)
+    7000/7156  (5 f/s, eta 0.5 min)
+  -- 7156/7156 ok in 1319.0s (5 f/s)
+[30/92] FITS  20251210_data/frosty
+  -> frosty: 6865 FITS files, camera=main_camera
+    1000/6865  (6 f/s, eta 17.1 min)
+    2000/6865  (6 f/s, eta 14.3 min)
+    3000/6865  (6 f/s, eta 11.5 min)
+    4000/6865  (6 f/s, eta 8.6 min)
+    5000/6865  (6 f/s, eta 5.5 min)
+    6000/6865  (6 f/s, eta 2.5 min)
+  -- 6865/6865 ok in 1221.5s (6 f/s)
+[31/92] FITS  20251217_data/warming
+  -> warming: 5191 FITS files, camera=main_camera
+    1000/5191  (6 f/s, eta 12.0 min)
+    2000/5191  (5 f/s, eta 9.9 min)
+    3000/5191  (6 f/s, eta 6.6 min)
+    4000/5191  (6 f/s, eta 3.6 min)
+    5000/5191  (6 f/s, eta 0.6 min)
+  -- 5191/5191 ok in 918.4s (6 f/s)
+[32/92] FITS  20251223_data/realwinterbreak
+  -> realwinterbreak: 18530 FITS files, camera=main_camera
+    1000/18530  (6 f/s, eta 47.8 min)
+    2000/18530  (6 f/s, eta 44.4 min)
+    3000/18530  (6 f/s, eta 41.5 min)
+    4000/18530  (6 f/s, eta 38.6 min)
+    5000/18530  (6 f/s, eta 36.0 min)
+    6000/18530  (6 f/s, eta 33.3 min)
+    7000/18530  (6 f/s, eta 30.6 min)
+    8000/18530  (6 f/s, eta 28.1 min)
+    9000/18530  (6 f/s, eta 26.0 min)
+    10000/18530  (6 f/s, eta 23.2 min)
+    11000/18530  (6 f/s, eta 20.8 min)
+    12000/18530  (6 f/s, eta 18.0 min)
+    13000/18530  (6 f/s, eta 15.2 min)
+    14000/18530  (6 f/s, eta 12.4 min)
+    15000/18530  (6 f/s, eta 9.7 min)
+    16000/18530  (6 f/s, eta 7.0 min)
+    17000/18530  (6 f/s, eta 4.2 min)
+    18000/18530  (6 f/s, eta 1.5 min)
+  -- 18530/18530 ok in 3061.7s (6 f/s)
+[33/92] FITS  20260105_data/postwinterbreak
+  -> postwinterbreak: 11069 FITS files, camera=main_camera
+    1000/11069  (6 f/s, eta 26.8 min)
+    2000/11069  (6 f/s, eta 23.6 min)
+    3000/11069  (7 f/s, eta 20.3 min)
+    4000/11069  (7 f/s, eta 17.5 min)
+    5000/11069  (7 f/s, eta 15.0 min)
+    6000/11069  (7 f/s, eta 12.6 min)
+    7000/11069  (7 f/s, eta 10.2 min)
+    8000/11069  (7 f/s, eta 7.6 min)
+    9000/11069  (7 f/s, eta 5.1 min)
+    10000/11069  (7 f/s, eta 2.6 min)
+    11000/11069  (7 f/s, eta 0.2 min)
+  -- 11069/11069 ok in 1661.8s (7 f/s)
+[34/92] FITS  20260130_data/newsecondary
+  -> newsecondary: 3999 FITS files, camera=main_camera
+    1000/3999  (2 f/s, eta 22.3 min)
+    2000/3999  (2 f/s, eta 14.6 min)
+    3000/3999  (2 f/s, eta 7.2 min)
+  -- 1124/3999 ok in 1743.6s (2 f/s)
+[35/92] FITS  20260206_data/replacedprimary
+  -> replacedprimary: 5711 FITS files, camera=main_camera
+    1000/5711  (2 f/s, eta 34.1 min)
+    2000/5711  (2 f/s, eta 26.3 min)
+    3000/5711  (2 f/s, eta 19.0 min)
+    4000/5711  (2 f/s, eta 12.0 min)
+    5000/5711  (2 f/s, eta 4.9 min)
+  -- 5711/5711 ok in 2386.7s (2 f/s)
+[36/92] FITS  20260213_data/allmetal
+  -> allmetal: 3922 FITS files, camera=main_camera
+    1000/3922  (2 f/s, eta 21.0 min)
+    2000/3922  (3 f/s, eta 12.7 min)
+    3000/3922  (2 f/s, eta 6.2 min)
+  -- 3273/3922 ok in 1595.8s (2 f/s)
+[37/92] FITS  20260217_data/morewarming
+  -> morewarming: 3083 FITS files, camera=main_camera
+    1000/3083  (2 f/s, eta 15.1 min)
+    2000/3083  (2 f/s, eta 7.7 min)
+    3000/3083  (2 f/s, eta 0.6 min)
+  -- 3083/3083 ok in 1320.9s (2 f/s)
+[38/92] FITS  20260219_data/hotandcold
+  -> hotandcold: 15806 FITS files, camera=main_camera
+    1000/15806  (2 f/s, eta 129.4 min)
+    2000/15806  (2 f/s, eta 107.8 min)
+    3000/15806  (2 f/s, eta 95.1 min)
+    4000/15806  (2 f/s, eta 85.7 min)
+    5000/15806  (2 f/s, eta 78.3 min)
+    6000/15806  (2 f/s, eta 70.5 min)
+    7000/15806  (2 f/s, eta 63.3 min)
+    8000/15806  (2 f/s, eta 56.9 min)
+    9000/15806  (2 f/s, eta 50.5 min)
+    10000/15806  (2 f/s, eta 43.5 min)
+    11000/15806  (2 f/s, eta 36.3 min)
+    12000/15806  (2 f/s, eta 28.9 min)
+    13000/15806  (2 f/s, eta 21.5 min)
+    14000/15806  (2 f/s, eta 13.8 min)
+    15000/15806  (2 f/s, eta 6.1 min)
+  -- 15789/15806 ok in 7195.5s (2 f/s)
+[39/92] FITS  20260302_data/genieshots
+  -> genieshots: 2550 FITS files, camera=dalsa_genie
+    1000/2550  (3 f/s, eta 8.6 min)
+    2000/2550  (3 f/s, eta 2.9 min)
+  -- 2550/2550 ok in 794.4s (3 f/s)
+[40/92] FITS  20260302_data/secondarylaser
+  -> secondarylaser: 2572 FITS files, camera=main_camera
+    1000/2572  (2 f/s, eta 13.4 min)
+    2000/2572  (2 f/s, eta 4.7 min)
+  -- 2568/2572 ok in 1261.8s (2 f/s)
+[41/92] FITS  20260306_data/springbreak
+  -> springbreak: 14174 FITS files, camera=main_camera
+    1000/14174  (2 f/s, eta 113.4 min)
+    2000/14174  (2 f/s, eta 102.4 min)
+    3000/14174  (2 f/s, eta 94.1 min)
+    4000/14174  (2 f/s, eta 85.7 min)
+    5000/14174  (2 f/s, eta 76.9 min)
+    6000/14174  (2 f/s, eta 67.2 min)
+    7000/14174  (2 f/s, eta 59.3 min)
+    8000/14174  (2 f/s, eta 51.1 min)
+    9000/14174  (2 f/s, eta 42.8 min)
+    10000/14174  (2 f/s, eta 34.6 min)
+    11000/14174  (2 f/s, eta 26.3 min)
+    12000/14174  (2 f/s, eta 17.7 min)
+    13000/14174  (2 f/s, eta 9.6 min)
+    14000/14174  (2 f/s, eta 1.4 min)
+  -- 14166/14174 ok in 6962.7s (2 f/s)
+[42/92] FITS  20260306_data/springgenie
+  -> springgenie: 14150 FITS files, camera=dalsa_genie
+    1000/14150  (10 f/s, eta 21.6 min)
+    2000/14150  (12 f/s, eta 16.6 min)
+    3000/14150  (13 f/s, eta 14.4 min)
+    4000/14150  (13 f/s, eta 12.9 min)
+    5000/14150  (13 f/s, eta 11.5 min)
+    6000/14150  (13 f/s, eta 10.1 min)
+    7000/14150  (14 f/s, eta 8.8 min)
+    8000/14150  (13 f/s, eta 7.7 min)
+    9000/14150  (13 f/s, eta 6.4 min)
+    10000/14150  (14 f/s, eta 5.1 min)
+    11000/14150  (14 f/s, eta 3.9 min)
+    12000/14150  (14 f/s, eta 2.6 min)
+    13000/14150  (14 f/s, eta 1.4 min)
+    14000/14150  (14 f/s, eta 0.2 min)
+  -- 14150/14150 ok in 1024.3s (14 f/s)
+[43/92] FITS  20260320_data/statictest
+  -> statictest: 5660 FITS files, camera=main_camera
+    1000/5660  (2 f/s, eta 36.8 min)
+    2000/5660  (2 f/s, eta 28.9 min)
+    3000/5660  (2 f/s, eta 20.9 min)
+    4000/5660  (2 f/s, eta 13.1 min)
+    5000/5660  (2 f/s, eta 5.2 min)
+  -- 5593/5660 ok in 2669.5s (2 f/s)
+[44/92] FITS  20260320_data/statictestgenie
+  -> statictestgenie: 5676 FITS files, camera=dalsa_genie
+    1000/5676  (13 f/s, eta 5.9 min)
+    2000/5676  (13 f/s, eta 4.7 min)
+    3000/5676  (14 f/s, eta 3.3 min)
+    4000/5676  (13 f/s, eta 2.1 min)
+    5000/5676  (14 f/s, eta 0.8 min)
+  -- 5676/5676 ok in 415.4s (14 f/s)
+[45/92] FITS  20260415_data/zoeystatic
+  -> zoeystatic: 7285 FITS files, camera=main_camera
+    1000/7285  (3 f/s, eta 38.3 min)
+    2000/7285  (3 f/s, eta 30.9 min)
+    3000/7285  (3 f/s, eta 25.0 min)
+    4000/7285  (3 f/s, eta 18.5 min)
+    5000/7285  (3 f/s, eta 12.8 min)
+    6000/7285  (3 f/s, eta 7.4 min)
+    7000/7285  (3 f/s, eta 1.7 min)
+  -- 7285/7285 ok in 2643.9s (3 f/s)
+[46/92] FITS  20260415_data/zoeystaticgenie
+  -> zoeystaticgenie: 7269 FITS files, camera=dalsa_genie
+    1000/7269  (11 f/s, eta 9.3 min)
+    2000/7269  (12 f/s, eta 7.0 min)
+    3000/7269  (13 f/s, eta 5.5 min)
+    4000/7269  (13 f/s, eta 4.2 min)
+    5000/7269  (13 f/s, eta 2.9 min)
+    6000/7269  (13 f/s, eta 1.6 min)
+    7000/7269  (13 f/s, eta 0.3 min)
+  -- 7269/7269 ok in 546.2s (13 f/s)
+[47/92] FITS  20260420_data/zoeysecondary
+  -> zoeysecondary: 10156 FITS files, camera=main_camera
+    1000/10156  (9 f/s, eta 17.5 min)
+    2000/10156  (10 f/s, eta 14.0 min)
+    3000/10156  (8 f/s, eta 14.2 min)
+    4000/10156  (5 f/s, eta 18.9 min)
+    5000/10156  (4 f/s, eta 19.7 min)
+    6000/10156  (4 f/s, eta 17.7 min)
+    7000/10156  (4 f/s, eta 14.8 min)
+    8000/10156  (3 f/s, eta 10.9 min)
+    9000/10156  (3 f/s, eta 6.1 min)
+    10000/10156  (3 f/s, eta 0.9 min)
+  -- 9350/10156 ok in 3367.0s (3 f/s)
+[48/92] FITS  20260420_data/zoeysecondarygenie
+  -> zoeysecondarygenie: 10131 FITS files, camera=dalsa_genie
+    1000/10131  (13 f/s, eta 11.5 min)
+    2000/10131  (14 f/s, eta 9.8 min)
+    3000/10131  (14 f/s, eta 8.5 min)
+    4000/10131  (14 f/s, eta 7.2 min)
+    5000/10131  (14 f/s, eta 6.1 min)
+    6000/10131  (14 f/s, eta 4.9 min)
+    7000/10131  (14 f/s, eta 3.7 min)
+    8000/10131  (14 f/s, eta 2.6 min)
+    9000/10131  (14 f/s, eta 1.4 min)
+    10000/10131  (14 f/s, eta 0.2 min)
+  -- 10131/10131 ok in 743.5s (14 f/s)
+[49/92] FITS  20260529_data/newprimary
+  -> newprimary: 8244 FITS files, camera=main_camera
+    1000/8244  (13 f/s, eta 9.5 min)
+    2000/8244  (13 f/s, eta 8.2 min)
+    3000/8244  (13 f/s, eta 7.0 min)
+    4000/8244  (13 f/s, eta 5.6 min)
+    5000/8244  (13 f/s, eta 4.2 min)
+    6000/8244  (12 f/s, eta 3.0 min)
+    7000/8244  (13 f/s, eta 1.6 min)
+    8000/8244  (13 f/s, eta 0.3 min)
+  -- 8244/8244 ok in 645.7s (13 f/s)
+[50/92] FITS  20260604_data/newprimaryagain
+  -> newprimaryagain: 7163 FITS files, camera=main_camera
+    1000/7163  (9 f/s, eta 10.9 min)
+    2000/7163  (10 f/s, eta 8.4 min)
+    3000/7163  (11 f/s, eta 6.5 min)
+    4000/7163  (11 f/s, eta 4.8 min)
+    5000/7163  (11 f/s, eta 3.2 min)
+    6000/7163  (11 f/s, eta 1.8 min)
+    7000/7163  (11 f/s, eta 0.2 min)
+  -- 7163/7163 ok in 643.2s (11 f/s)
+[51/92] FITS  20260624_data/bridgetstatic
+  -> bridgetstatic: 6743 FITS files, camera=main_camera
+    1000/6743  (5 f/s, eta 18.0 min)
+    2000/6743  (6 f/s, eta 14.2 min)
+    3000/6743  (6 f/s, eta 11.1 min)
+    4000/6743  (6 f/s, eta 8.1 min)
+    5000/6743  (6 f/s, eta 5.2 min)
+    6000/6743  (5 f/s, eta 2.3 min)
+  -- 293/6743 ok in 1251.5s (5 f/s)
+[52/92] FITS  20260624_data/bridgetstaticgenie
+  -> bridgetstaticgenie: 5959 FITS files, camera=dalsa_genie
+    1000/5959  (10 f/s, eta 8.3 min)
+    2000/5959  (11 f/s, eta 6.0 min)
+    3000/5959  (11 f/s, eta 4.4 min)
+    4000/5959  (11 f/s, eta 3.0 min)
+    5000/5959  (11 f/s, eta 1.4 min)
+  -- 5959/5959 ok in 524.7s (11 f/s)
+[53/92] IMAGE 20250917/maxtest1
+  -> maxtest1: 100 images, camera=main_camera
+  -- 100/100 ok in 9.1s (11 f/s)
+[54/92] IMAGE 20250917/maxtest2
+  -> maxtest2: 287 images, camera=main_camera
+  -- 287/287 ok in 14.2s (20 f/s)
+[55/92] IMAGE 20250917/minuteSecondly
+  -> minuteSecondly: 61 images, camera=main_camera
+  -- 61/61 ok in 7.3s (8 f/s)
+[56/92] IMAGE 20250917/morningsecondly
+  -> morningsecondly: 9999 images, camera=main_camera
+    1000/9999  (35 f/s, eta 4.3 min)
+    2000/9999  (44 f/s, eta 3.1 min)
+    3000/9999  (47 f/s, eta 2.5 min)
+    4000/9999  (48 f/s, eta 2.1 min)
+    5000/9999  (50 f/s, eta 1.7 min)
+    6000/9999  (50 f/s, eta 1.3 min)
+    7000/9999  (51 f/s, eta 1.0 min)
+    8000/9999  (51 f/s, eta 0.6 min)
+    9000/9999  (52 f/s, eta 0.3 min)
+  -- 9999/9999 ok in 194.9s (51 f/s)
+[57/92] IMAGE 20250918/fanoff
+  -> fanoff: 9249 images, camera=main_camera
+    1000/9249  (4 f/s, eta 37.5 min)
+    2000/9249  (4 f/s, eta 31.7 min)
+    3000/9249  (4 f/s, eta 25.8 min)
+    4000/9249  (4 f/s, eta 21.9 min)
+    5000/9249  (4 f/s, eta 17.9 min)
+    6000/9249  (4 f/s, eta 13.7 min)
+    7000/9249  (4 f/s, eta 9.6 min)
+    8000/9249  (4 f/s, eta 5.3 min)
+    9000/9249  (4 f/s, eta 1.1 min)
+  -- 9249/9249 ok in 2372.3s (4 f/s)
+[58/92] IMAGE 20250918/longrun
+  -> longrun: 16821 images, camera=main_camera
+    1000/16821  (4 f/s, eta 69.1 min)
+    2000/16821  (5 f/s, eta 46.3 min)
+    3000/16821  (6 f/s, eta 37.1 min)
+    4000/16821  (7 f/s, eta 31.5 min)
+    5000/16821  (7 f/s, eta 27.4 min)
+    6000/16821  (7 f/s, eta 24.1 min)
+    7000/16821  (8 f/s, eta 21.5 min)
+    8000/16821  (8 f/s, eta 19.2 min)
+    9000/16821  (7 f/s, eta 17.9 min)
+    10000/16821  (7 f/s, eta 16.7 min)
+    11000/16821  (7 f/s, eta 14.9 min)
+    12000/16821  (6 f/s, eta 12.6 min)
+    13000/16821  (6 f/s, eta 10.1 min)
+    14000/16821  (6 f/s, eta 7.5 min)
+    15000/16821  (6 f/s, eta 4.8 min)
+    16000/16821  (6 f/s, eta 2.1 min)
+  -- 16821/16821 ok in 2560.5s (7 f/s)
+[59/92] IMAGE 20250918/nightvideo
+  -> nightvideo: 9006 images, camera=main_camera
+    1000/9006  (4 f/s, eta 34.9 min)
+    2000/9006  (5 f/s, eta 25.7 min)
+    3000/9006  (5 f/s, eta 21.6 min)
+    4000/9006  (4 f/s, eta 18.6 min)
+    5000/9006  (4 f/s, eta 14.8 min)
+    6000/9006  (5 f/s, eta 10.8 min)
+    7000/9006  (5 f/s, eta 7.3 min)
+    8000/9006  (5 f/s, eta 3.6 min)
+    9000/9006  (5 f/s, eta 0.0 min)
+  -- 9006/9006 ok in 1968.3s (5 f/s)
+[60/92] IMAGE 20250918/overnightvideo
+  -> overnightvideo: 1373 images, camera=main_camera
+    1000/1373  (4 f/s, eta 1.4 min)
+  -- 1373/1373 ok in 325.2s (4 f/s)
+[61/92] IMAGE 20250918/stability
+  -> stability: 4479 images, camera=main_camera
+    1000/4479  (4 f/s, eta 14.0 min)
+    2000/4479  (4 f/s, eta 9.6 min)
+    3000/4479  (4 f/s, eta 5.8 min)
+    4000/4479  (4 f/s, eta 1.8 min)
+  -- 4479/4479 ok in 1026.6s (4 f/s)
+[62/92] IMAGE 20250925/fanoff5237
+  -> fanoff5237: 9330 images, camera=main_camera
+    1000/9330  (4 f/s, eta 32.2 min)
+    2000/9330  (4 f/s, eta 27.6 min)
+    3000/9330  (4 f/s, eta 24.1 min)
+    4000/9330  (4 f/s, eta 20.5 min)
+    5000/9330  (4 f/s, eta 16.6 min)
+    6000/9330  (4 f/s, eta 12.8 min)
+    7000/9330  (4 f/s, eta 9.0 min)
+    8000/9330  (4 f/s, eta 5.1 min)
+    9000/9330  (4 f/s, eta 1.3 min)
+  -- 9330/9330 ok in 2142.2s (4 f/s)
+[63/92] IMAGE 20250925/minutely
+  -> minutely: 1144 images, camera=main_camera
+    1000/1144  (4 f/s, eta 0.6 min)
+  -- 1144/1144 ok in 256.6s (4 f/s)
+[64/92] IMAGE 20250925/noon5237
+  -> noon5237: 9393 images, camera=main_camera
+    1000/9393  (4 f/s, eta 33.0 min)
+    2000/9393  (4 f/s, eta 29.4 min)
+    3000/9393  (4 f/s, eta 25.3 min)
+    4000/9393  (4 f/s, eta 21.3 min)
+    5000/9393  (4 f/s, eta 17.4 min)
+    6000/9393  (4 f/s, eta 13.9 min)
+    7000/9393  (4 f/s, eta 9.8 min)
+    8000/9393  (4 f/s, eta 5.7 min)
+    9000/9393  (4 f/s, eta 1.6 min)
+  -- 9393/9393 ok in 2334.7s (4 f/s)
+[65/92] IMAGE 20250926/dotrefound
+  -> dotrefound: 4058 images, camera=main_camera
+    1000/4058  (7 f/s, eta 7.0 min)
+    2000/4058  (7 f/s, eta 4.7 min)
+    3000/4058  (7 f/s, eta 2.4 min)
+    4000/4058  (7 f/s, eta 0.1 min)
+  -- 4058/4058 ok in 562.3s (7 f/s)
+[66/92] IMAGE 20250926/fanoff5237
+  -> fanoff5237: 9129 images, camera=main_camera
+    1000/9129  (3 f/s, eta 46.3 min)
+    2000/9129  (3 f/s, eta 39.1 min)
+    3000/9129  (3 f/s, eta 33.7 min)
+    4000/9129  (3 f/s, eta 28.1 min)
+    5000/9129  (3 f/s, eta 22.6 min)
+    6000/9129  (3 f/s, eta 17.2 min)
+    7000/9129  (3 f/s, eta 11.7 min)
+    8000/9129  (3 f/s, eta 6.2 min)
+    9000/9129  (3 f/s, eta 0.7 min)
+  -- 9129/9129 ok in 3002.2s (3 f/s)
+[67/92] IMAGE 20250926/minutely
+  -> minutely: 198 images, camera=main_camera
+  -- 198/198 ok in 62.2s (3 f/s)
+[68/92] IMAGE 20250926/morning5237
+  -> morning5237: 9176 images, camera=main_camera
+    1000/9176  (3 f/s, eta 46.8 min)
+    2000/9176  (3 f/s, eta 41.3 min)
+    3000/9176  (3 f/s, eta 35.5 min)
+    4000/9176  (3 f/s, eta 29.8 min)
+    5000/9176  (3 f/s, eta 24.2 min)
+    6000/9176  (3 f/s, eta 18.3 min)
+    7000/9176  (3 f/s, eta 12.6 min)
+    8000/9176  (3 f/s, eta 6.8 min)
+    9000/9176  (3 f/s, eta 1.0 min)
+  -- 9176/9176 ok in 3172.4s (3 f/s)
+[69/92] IMAGE 20251014/minutelyovernight
+  -> minutelyovernight: 2490 images, camera=main_camera
+    1000/2490  (38 f/s, eta 0.6 min)
+    2000/2490  (47 f/s, eta 0.2 min)
+  -- 2490/2490 ok in 54.1s (46 f/s)
+[70/92] IMAGE 20251016/minutely
+  -> minutely: 1130 images, camera=main_camera
+    1000/1130  (37 f/s, eta 0.1 min)
+  -- 1130/1130 ok in 30.0s (38 f/s)
+[71/92] IMAGE 20251017/minutely
+  -> minutely: 2178 images, camera=main_camera
+    1000/2178  (38 f/s, eta 0.5 min)
+    2000/2178  (45 f/s, eta 0.1 min)
+  -- 2178/2178 ok in 48.8s (45 f/s)
+[72/92] IMAGE 20251017/morning5237
+  -> morning5237: 6083 images, camera=main_camera
+    1000/6083  (40 f/s, eta 2.1 min)
+    2000/6083  (49 f/s, eta 1.4 min)
+    3000/6083  (52 f/s, eta 1.0 min)
+    4000/6083  (54 f/s, eta 0.6 min)
+    5000/6083  (55 f/s, eta 0.3 min)
+    6000/6083  (56 f/s, eta 0.0 min)
+  -- 6083/6083 ok in 110.5s (55 f/s)
+[73/92] IMAGE 20251020/minutely
+  -> minutely: 1560 images, camera=main_camera
+    1000/1560  (37 f/s, eta 0.3 min)
+  -- 1560/1560 ok in 41.8s (37 f/s)
+[74/92] IMAGE 20251020/morning5237
+  -> morning5237: 4133 images, camera=main_camera
+    1000/4133  (3 f/s, eta 20.7 min)
+    2000/4133  (3 f/s, eta 13.8 min)
+    3000/4133  (3 f/s, eta 7.3 min)
+    4000/4133  (3 f/s, eta 0.8 min)
+  -- 4133/4133 ok in 1581.0s (3 f/s)
+[75/92] IMAGE 20251020/morning_c5237
+  -> morning_c5237: 8052 images, camera=main_camera
+    1000/8052  (24 f/s, eta 4.8 min)
+    2000/8052  (34 f/s, eta 2.9 min)
+    3000/8052  (40 f/s, eta 2.1 min)
+    4000/8052  (44 f/s, eta 1.5 min)
+    5000/8052  (47 f/s, eta 1.1 min)
+    6000/8052  (49 f/s, eta 0.7 min)
+    7000/8052  (51 f/s, eta 0.3 min)
+    8000/8052  (53 f/s, eta 0.0 min)
+  -- 8052/8052 ok in 153.2s (53 f/s)
+[76/92] IMAGE 20251022/fan_restart5237
+  -> fan_restart5237: 6232 images, camera=main_camera
+    1000/6232  (36 f/s, eta 2.4 min)
+    2000/6232  (45 f/s, eta 1.6 min)
+    3000/6232  (49 f/s, eta 1.1 min)
+    4000/6232  (52 f/s, eta 0.7 min)
+    5000/6232  (53 f/s, eta 0.4 min)
+    6000/6232  (55 f/s, eta 0.1 min)
+  -- 6232/6232 ok in 113.9s (55 f/s)
+[77/92] IMAGE 20251022/installed_accel
+  -> installed_accel: 8916 images, camera=main_camera
+    1000/8916  (39 f/s, eta 3.4 min)
+    2000/8916  (46 f/s, eta 2.5 min)
+    3000/8916  (51 f/s, eta 1.9 min)
+    4000/8916  (54 f/s, eta 1.5 min)
+    5000/8916  (56 f/s, eta 1.2 min)
+    6000/8916  (56 f/s, eta 0.9 min)
+    7000/8916  (56 f/s, eta 0.6 min)
+    8000/8916  (54 f/s, eta 0.3 min)
+  -- 8916/8916 ok in 167.0s (53 f/s)
+[78/92] IMAGE 20251022/installed_accel_nofan
+  -> installed_accel_nofan: 5811 images, camera=main_camera
+    1000/5811  (17 f/s, eta 4.8 min)
+    2000/5811  (17 f/s, eta 3.7 min)
+    3000/5811  (18 f/s, eta 2.6 min)
+    4000/5811  (21 f/s, eta 1.5 min)
+    5000/5811  (22 f/s, eta 0.6 min)
+  -- 5811/5811 ok in 251.9s (23 f/s)
+[79/92] IMAGE 20251022/morning5237
+  -> morning5237: 6423 images, camera=main_camera
+    1000/6423  (37 f/s, eta 2.5 min)
+    2000/6423  (44 f/s, eta 1.7 min)
+    3000/6423  (46 f/s, eta 1.2 min)
+    4000/6423  (48 f/s, eta 0.8 min)
+    5000/6423  (49 f/s, eta 0.5 min)
+    6000/6423  (49 f/s, eta 0.1 min)
+  -- 6423/6423 ok in 131.2s (49 f/s)
+[80/92] IMAGE 20251022/morning_nofan5237
+  -> morning_nofan5237: 5170 images, camera=main_camera
+    1000/5170  (38 f/s, eta 1.8 min)
+    2000/5170  (44 f/s, eta 1.2 min)
+    3000/5170  (47 f/s, eta 0.8 min)
+    4000/5170  (49 f/s, eta 0.4 min)
+    5000/5170  (50 f/s, eta 0.1 min)
+  -- 5170/5170 ok in 105.8s (49 f/s)
+[81/92] IMAGE 20251022/night_accel
+  -> night_accel: 248 images, camera=main_camera
+  -- 248/248 ok in 15.3s (16 f/s)
+[82/92] IMAGE 20251023/morning25
+  -> morning25: 11520 images, camera=main_camera
+    1000/11520  (8 f/s, eta 22.3 min)
+    2000/11520  (14 f/s, eta 11.5 min)
+    3000/11520  (15 f/s, eta 9.4 min)
+    4000/11520  (12 f/s, eta 10.1 min)
+    5000/11520  (11 f/s, eta 9.8 min)
+    6000/11520  (10 f/s, eta 8.9 min)
+    7000/11520  (10 f/s, eta 7.8 min)
+    8000/11520  (9 f/s, eta 6.3 min)
+    9000/11520  (10 f/s, eta 4.3 min)
+    10000/11520  (11 f/s, eta 2.4 min)
+    11000/11520  (12 f/s, eta 0.8 min)
+  -- 11520/11520 ok in 966.5s (12 f/s)
+[83/92] IMAGE 20251023/nightdrift
+  -> nightdrift: 9 images, camera=main_camera
+  -- 9/9 ok in 4.2s (2 f/s)
+[84/92] IMAGE 20251023/nightdriftB
+  -> nightdriftB: 1259 images, camera=main_camera
+    1000/1259  (36 f/s, eta 0.1 min)
+  -- 1259/1259 ok in 33.2s (38 f/s)
+[85/92] IMAGE 20251023/noon5237
+  -> noon5237: 8364 images, camera=main_camera
+    1000/8364  (37 f/s, eta 3.3 min)
+    2000/8364  (44 f/s, eta 2.4 min)
+    3000/8364  (47 f/s, eta 1.9 min)
+    4000/8364  (48 f/s, eta 1.5 min)
+    5000/8364  (48 f/s, eta 1.2 min)
+    6000/8364  (49 f/s, eta 0.8 min)
+    7000/8364  (50 f/s, eta 0.5 min)
+    8000/8364  (50 f/s, eta 0.1 min)
+  -- 8364/8364 ok in 168.3s (50 f/s)
+[86/92] IMAGE 20251023/noondrift
+  -> noondrift: 266 images, camera=main_camera
+  -- 266/266 ok in 13.2s (20 f/s)
+[87/92] IMAGE 20251024/weekenddrift
+  -> weekenddrift: 1042 images, camera=main_camera
+    1000/1042  (38 f/s, eta 0.0 min)
+  -- 1042/1042 ok in 29.2s (36 f/s)
+[88/92] IMAGE 20251111/laserday
+  -> laserday: 72 images, camera=main_camera
+  -- 72/72 ok in 43.7s (2 f/s)
+[89/92] IMAGE 20251111/lasernight
+  -> lasernight: 1039 images, camera=main_camera
+    1000/1039  (3 f/s, eta 0.2 min)
+  -- 1039/1039 ok in 398.3s (3 f/s)
+[90/92] IMAGE 20251112/laserdaytest
+  -> laserdaytest: 1115 images, camera=main_camera
+    1000/1115  (3 f/s, eta 0.8 min)
+  -- 1115/1115 ok in 432.9s (3 f/s)
+[91/92] IMAGE 20251112/lasernighttest
+  -> lasernighttest: 1130 images, camera=main_camera
+    1000/1130  (3 f/s, eta 0.9 min)
+  -- 1130/1130 ok in 453.6s (2 f/s)
+[92/92] IMAGE 20260216/warming
+  -> warming: 76 images, camera=main_camera
+  -- 66/76 ok in 41.4s (2 f/s)
+  run timings -> D:\Users\jad507\PycharmProjects\OGRE_lab\reprocess_output\run_timings.csv
+  collected 36 summary CSV(s) -> D:\Users\jad507\PycharmProjects\OGRE_lab\reprocess_output\all_runs_summary.csv
+
+Done. Total wall time: 1667.8 min.
+pixel_scales.csv updated at D:\Users\jad507\PycharmProjects\OGRE_lab\pixel_scales.csv.
+Output folder: D:\Users\jad507\PycharmProjects\OGRE_lab\reprocess_output
+(.venv) PS D:\Users\jad507\PycharmProjects\OGRE_lab>
