@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+snowday,2449,25-12-01 16-31-28,25-12-03 09-20-22,"snowday, pumps off",0.016666666666666666,-0.2798478237080691,0.8507571193331989,0.0900383938457117,1.0047736405244136,63.7187234540975,0.19868296452876258,59.54583823504878,0.31543399112284604

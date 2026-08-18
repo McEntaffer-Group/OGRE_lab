@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+frosty,6865,25-12-10 15-58-34,25-12-15 10-24-46,continued snow outside testing,0.016666666666666666,0.22990569275683212,0.8265105559267084,-0.3007030902443787,1.5933885217081467,58.9230062013717,0.37882323226888565,58.24055192646059,0.3893821214222324

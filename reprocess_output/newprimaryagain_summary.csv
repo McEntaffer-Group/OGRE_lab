@@ -1,0 +1,2 @@
+filename,total frames,good frames,start time,stop time,notes,frame interval (s),x position (px),x pos std (px),y position (px),y pos std (px),x position (as),x pos std (as),y position (as),y pos std (as),FWHM x (px),FWHM x std (px),FWHM y (px),FWHM y std (px)
+newprimaryagain,7163,7163,26-06-04 16-14-25,26-06-09 15-46-50,second primary test,60,1.5212550513364178,0.5172054274088536,-7.302078434185402,2.2316209553327395,0.22818825770046267,0.07758081411132803,-1.0953117651278104,0.3347431432999109,135.05622370206396,2.228099219378908,168.78164903472913,3.2005556634177985

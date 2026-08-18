@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+hotandcold,15806,26-02-19 16-18-51,26-02-26 15-00-05,temperatures expected to fluctuate,0.016666666666666666,-5.017721030734821,5.357484094801354,20.9898754288416,13.102400803873055,1.561254127722598,0.124229548527375,2.6752840904209156,0.5475148949870863

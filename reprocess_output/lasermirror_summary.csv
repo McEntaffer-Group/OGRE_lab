@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+lasermirror,2726,25-11-18 16-40-57,25-11-20 14-06-59,"laser and dot weekday test, accelerometers on mirror again, pumps on -> off midday 11-19",0.016666666666666666,1.5514321432926939,0.6497569293628525,-7.118281816624352,1.2190398097308142,66.77214825332311,0.23848407852999673,59.533395750919254,0.16736152477304703
