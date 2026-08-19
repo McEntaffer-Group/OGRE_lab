@@ -31,11 +31,15 @@ Memory guardrail:
   at 1920x2560 don't OOM.
 
 Two pipeline modes; --pipeline chooses:
-  shmem      Pre-allocates a (N, H, W) shared_memory buffer at the raw pixel
-             dtype. Workers write image bytes directly into slot i via
-             zero-copy; only the ~200-byte fit-result dict crosses IPC. Movie
-             push reads the same buffer with no copy. Fastest when the run
-             fits in RAM.
+  shmem      Pre-allocates a (N, H, W) numpy memmap file (in OUTPUT_DIR)
+             at the raw pixel dtype. Workers write image bytes directly into
+             slot i via zero-copy; only the ~200-byte fit-result dict
+             crosses IPC. Movie push reads the same buffer with no copy.
+             Fastest when the run fits in RAM (OS page cache keeps it hot).
+             File-backed rather than anonymous shared memory so it works on
+             Windows without hitting the per-worker commit-charge limit
+             (WinError 1450). On Linux, point TMPDIR at /dev/shm to force
+             RAM-backing instead of disk.
   streaming  Workers pickle the whole image back over IPC. Slower per-frame
              but bounded to --max-in-flight images at once — the only path
              that safely handles runs larger than RAM.
@@ -270,18 +274,17 @@ class _StreamingMovie:
 # Per-worker cache populated by _shmem_worker_init; module-level so worker
 # functions can find it after fork/spawn without paying pickle cost per call.
 _SHMEM_ARR = None
-_SHMEM_KEEPALIVE = None  # keep the SharedMemory object alive in the worker
 
 
-def _shmem_worker_init(shmem_name: str, shape, dtype_str: str) -> None:
-    """ProcessPool initializer: attach this worker to the parent's shared
-    image buffer and expose it as a plain numpy ndarray. Also silences
-    Ctrl-C so shutdown flows through the parent (matches _worker_init)."""
-    global _SHMEM_ARR, _SHMEM_KEEPALIVE
-    from multiprocessing.shared_memory import SharedMemory
-    _SHMEM_KEEPALIVE = SharedMemory(name=shmem_name)
-    _SHMEM_ARR = np.ndarray(tuple(shape), dtype=np.dtype(dtype_str),
-                            buffer=_SHMEM_KEEPALIVE.buf)
+def _shmem_worker_init(memmap_path: str, shape, dtype_str: str) -> None:
+    """ProcessPool initializer: open the parent-created memmap file and
+    expose it as a plain numpy ndarray. File-backed instead of anon shmem
+    to avoid Windows commit-charge accounting blowing up with many workers
+    (WinError 1450). Also silences Ctrl-C so shutdown flows through the
+    parent (matches _worker_init)."""
+    global _SHMEM_ARR
+    _SHMEM_ARR = np.memmap(memmap_path, dtype=np.dtype(dtype_str),
+                           mode="r+", shape=tuple(shape))
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
@@ -421,9 +424,12 @@ def _shmem_run(
     video_stride: int,
     video_fps: int = DEFAULT_VIDEO_FPS,
 ) -> dict:
-    """Zero-copy pipeline: workers write images into a shared buffer; main
-    reads back the same buffer for the movie."""
-    from multiprocessing.shared_memory import SharedMemory
+    """Zero-copy pipeline: workers write images into a file-backed memmap;
+    main reads back the same file for the movie. File-backed rather than
+    anon shmem so it works cross-platform without hitting Windows'
+    commit-charge accounting (WinError 1450 with many workers). On Linux
+    users can point TMPDIR at /dev/shm to force RAM-backing."""
+    import tempfile
 
     if out_csv.exists():
         _mirror(out_csv, f"{runname}_frames_prev.csv")
@@ -435,8 +441,17 @@ def _shmem_run(
     shape = (n_files,) + first_img.shape
     dtype = first_img.dtype
     n_bytes = int(np.prod(shape) * dtype.itemsize)
-    shmem = SharedMemory(create=True, size=n_bytes)
-    arr = np.ndarray(shape, dtype=dtype, buffer=shmem.buf)
+
+    # Temp file goes in OUTPUT_DIR (same filesystem as everything else this
+    # tool writes) so cleanup is co-located and we don't blow up C:/ on
+    # Windows if the system temp dir is on a small drive.
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(prefix=f"{runname}_shmem_",
+                                        suffix=".dat", dir=OUTPUT_DIR)
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_name)
+    # np.memmap in 'w+' mode allocates the file to the requested size.
+    arr = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
 
     movie = None
     if make_movie:
@@ -451,7 +466,8 @@ def _shmem_run(
             movie = None
 
     print(f"  -> {runname}: {n_files} files, camera={stats['camera']}, "
-          f"shmem pipeline (buffer={n_bytes/1024**3:.2f} GB, stride={video_stride})")
+          f"shmem pipeline (memmap={n_bytes/1024**3:.2f} GB "
+          f"at {tmp_path.name}, stride={video_stride})")
 
     t0 = time.time()
     results = [None] * n_files
@@ -461,7 +477,7 @@ def _shmem_run(
         with ProcessPoolExecutor(
                 max_workers=WORKERS,
                 initializer=_shmem_worker_init,
-                initargs=(shmem.name, list(shape), str(dtype))) as exe:
+                initargs=(str(tmp_path), list(shape), str(dtype))) as exe:
             futures = [exe.submit(worker_fn, (path, i))
                        for i, path in enumerate(files)]
 
@@ -484,7 +500,11 @@ def _shmem_run(
         if movie is not None:
             movie.close()
         try:
-            shmem.close(); shmem.unlink()
+            del arr
+        except Exception:
+            pass
+        try:
+            tmp_path.unlink()
         except Exception:
             pass
         raise
@@ -492,9 +512,17 @@ def _shmem_run(
         if movie is not None:
             movie.close()
         try:
-            shmem.close(); shmem.unlink()
+            arr.flush()
         except Exception:
             pass
+        try:
+            del arr
+        except Exception:
+            pass
+        try:
+            tmp_path.unlink()
+        except Exception as exc:
+            print(f"    !! could not remove shmem temp file {tmp_path}: {exc}")
 
     df = (pd.DataFrame([r for r in results if r is not None])
             .sort_values("frame_num").reset_index(drop=True))
@@ -770,6 +798,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    # Clean up any orphaned memmap temp files from previous crashed runs.
+    for stale in OUTPUT_DIR.glob("*_shmem_*.dat"):
+        try:
+            stale.unlink()
+            print(f"  removed orphaned shmem file: {stale.name}")
+        except Exception:
+            pass
 
     fits_runs = _discover_fits_runs(root)
     image_runs = _discover_image_runs(root)
