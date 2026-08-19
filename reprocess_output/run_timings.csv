@@ -93,3 +93,6 @@ batch_timestamp,runname,camera,n_files,n_ok,elapsed_s,fps,source
 2026-08-17,warming,main_camera,76,66,41.43,1.8,E:\Reverse Telescope Test Data\20260216\warming
 2026-08-18,postspie,main_camera,5757,5757,423.15,13.6,E:\Reverse Telescope Test Data\20260814\postspie
 2026-08-18,postspiegenie,dalsa_genie,5742,5742,82.35,69.7,E:\Reverse Telescope Test Data\20260814\postspiegenie
+2026-08-19 15:28:39,postspie,main_camera,5757,5757,276.09,20.9,E:\Reverse Telescope Test Data\20260814_data\postspie\postspie_fits
+2026-08-19 15:28:39,postspiegenie,dalsa_genie,5742,5742,548.02,10.5,E:\Reverse Telescope Test Data\20260814_data\postspiegenie\postspiegenie_fits
+2026-08-19 15:28:39,_TOTAL_,,11499,11499,6607.15,1.7,

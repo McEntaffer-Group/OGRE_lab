@@ -82,6 +82,12 @@ MOVIE_FPS = 20
 MOVIE_IMSHOW_VMIN = 0
 # Percentile used to auto-set the movie's imshow vmax from a sample of frames.
 MOVIE_IMSHOW_VMAX_PERCENTILE = 99.5
+# Number of frames sampled up-front to derive vmax + profile-axis limits without
+# holding the whole run in memory.
+MOVIE_SAMPLE_FRAMES = 10
+# Ask ffmpeg for the NVIDIA hardware H.264 encoder; falls back to libx264
+# automatically if the encoder isn't available or the call fails.
+MOVIE_USE_NVENC = True
 
 PEAK_HEIGHT_FRAC = 0.50
 PEAK_MIN_DISTANCE_PX = 50
@@ -335,21 +341,34 @@ def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> N
           f"frame_rate={result['frame_rate']:.6f} Hz)")
 
 
-def _sample_vmax(loader, paths, n_sample: int = 5) -> float:
-    """Return a robust vmax for movie imshow from a few sample frames."""
+def _sample_movie_stats(loader, paths, n_sample: int = MOVIE_SAMPLE_FRAMES) -> dict:
+    """Sample a few frames spread across the run to derive vmax and profile-axis
+    limits without holding the whole run in memory. Mirrors dot_movie-Copy3's
+    quirky use of max-of-mins for profile minima (larger of per-frame minima),
+    which effectively hides low-outlier frames from the profile axis floor."""
     if not paths:
-        return 100.0
+        return {"vmax": 100.0,
+                "px_min": 0.0, "px_max": 1.0,
+                "py_min": 0.0, "py_max": 1.0}
     idxs = np.linspace(0, len(paths) - 1, num=min(n_sample, len(paths)), dtype=int)
     samples = []
     for i in idxs:
         try:
-            arr = loader(paths[i])
-            samples.append(np.percentile(arr, MOVIE_IMSHOW_VMAX_PERCENTILE))
+            samples.append(loader(paths[i]))
         except Exception:
             continue
     if not samples:
-        return 100.0
-    return float(max(samples))
+        samples = [loader(paths[0])]
+    vmax = float(max(np.percentile(img, MOVIE_IMSHOW_VMAX_PERCENTILE) for img in samples))
+    px_sums = [np.sum(img, axis=0) for img in samples]
+    py_sums = [np.sum(img, axis=1) for img in samples]
+    return {
+        "vmax":   vmax,
+        "px_max": float(max(p.max() for p in px_sums)),
+        "px_min": float(max(p.min() for p in px_sums)),  # max-of-mins, per dot_movie
+        "py_max": float(max(p.max() for p in py_sums)),
+        "py_min": float(max(p.min() for p in py_sums)),  # max-of-mins, per dot_movie
+    }
 
 
 def _load_fits_frame(path) -> np.ndarray:
@@ -364,8 +383,14 @@ def _load_image_frame(path) -> np.ndarray:
 def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | None = None) -> None:
     """Stream frames from disk one at a time into an ffmpeg-encoded .mp4.
 
-    Uses matplotlib's FuncAnimation with blit=True. Only one frame is held in
-    memory at any time, so the movie step scales to arbitrarily long runs."""
+    Layout matches dot_movie-Copy3.ipynb: main image bottom-left, X-profile line
+    plot above (shares x-axis with image), Y-profile line plot right (shares y),
+    timestamp text overlay in image corner. Uses matplotlib's FuncAnimation with
+    blit=True. Only one frame is held in memory at any time, so the movie step
+    scales to arbitrarily long runs.
+
+    Requests NVIDIA h264_nvenc when MOVIE_USE_NVENC is True; falls back to
+    libx264 if the nvenc save fails."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -374,31 +399,73 @@ def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | No
     if not paths:
         return
     first = loader(paths[0])
-    vmax = _sample_vmax(loader, paths)
+    stats = _sample_movie_stats(loader, paths)
 
-    fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(first, cmap="viridis", origin="lower",
-                   vmin=MOVIE_IMSHOW_VMIN, vmax=vmax, aspect="auto")
-    ax.set_xticks([]); ax.set_yticks([])
-    ts_text = ax.text(0.02, 0.98, "", transform=ax.transAxes, color="white",
-                      fontsize=12, verticalalignment="top",
-                      bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=3))
+    fig = plt.figure(figsize=(10, 8))
+    gs = fig.add_gridspec(2, 2, width_ratios=[4, 1], height_ratios=[1, 4],
+                          wspace=0.0, hspace=0.0)
+    ax_img = fig.add_subplot(gs[1, 0])
+    ax_x   = fig.add_subplot(gs[0, 0], sharex=ax_img)
+    ax_y   = fig.add_subplot(gs[1, 1], sharey=ax_img)
+    fig.add_subplot(gs[0, 1]).axis("off")
+
+    im = ax_img.imshow(first, cmap="viridis", origin="lower",
+                       vmin=MOVIE_IMSHOW_VMIN, vmax=stats["vmax"], aspect="auto")
+
+    profile_x = np.sum(first, axis=0)
+    profile_y = np.sum(first, axis=1)
+    line_x, = ax_x.plot(np.arange(first.shape[1]), profile_x)
+    line_y, = ax_y.plot(profile_y, np.arange(first.shape[0]))
+
+    ax_x.set_xlim(ax_img.get_xlim())
+    ax_y.set_ylim(ax_img.get_ylim())
+    ax_x.tick_params(labelbottom=False)
+    ax_y.tick_params(labelleft=False)
+    ax_x.set_ylabel("counts")
+    ax_y.set_xlabel("counts")
+    ax_x.grid(True)
+    ax_y.grid(True)
+    # dot_movie's exact "headroom" formula: subtract 200 from both x limits;
+    # subtract 200 from y-min only. Match verbatim for direct comparability.
+    ax_x.set_ylim(stats["px_min"] - 200, stats["px_max"] - 200)
+    ax_y.set_xlim(stats["py_min"] - 200, stats["py_max"])
+
+    ts_text = ax_img.text(0.02, 0.98, "", transform=ax_img.transAxes,
+                          color="white", fontsize=12, verticalalignment="top",
+                          bbox=dict(facecolor="black", alpha=0.5,
+                                    edgecolor="none", pad=3))
 
     def _update(i):
         try:
             arr = loader(paths[i])
             im.set_array(arr)
+            line_x.set_ydata(np.sum(arr, axis=0))
+            line_y.set_xdata(np.sum(arr, axis=1))
         except Exception:
             pass
         if timestamps and i < len(timestamps) and timestamps[i]:
             ts_text.set_text(timestamps[i])
-        return [im, ts_text]
+        return [im, line_x, line_y, ts_text]
 
     ani = animation.FuncAnimation(fig, _update, frames=len(paths),
                                   interval=50, blit=True)
     Writer = animation.writers["ffmpeg"]
-    writer = Writer(fps=MOVIE_FPS, bitrate=1800)
-    ani.save(str(out_path), writer=writer)
+
+    def _save(codec: str | None) -> None:
+        kwargs = {"fps": MOVIE_FPS, "bitrate": 1800}
+        if codec is not None:
+            kwargs["codec"] = codec
+        ani.save(str(out_path), writer=Writer(**kwargs))
+
+    if MOVIE_USE_NVENC:
+        try:
+            _save("h264_nvenc")
+        except Exception as exc:
+            print(f"    !! h264_nvenc failed ({exc}); retrying with libx264")
+            _save(None)
+    else:
+        _save(None)
+
     plt.close(fig)
 
 
