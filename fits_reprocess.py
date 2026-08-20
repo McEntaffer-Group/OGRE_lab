@@ -76,7 +76,7 @@ ROOT = Path("E:/Reverse Telescope Test Data")
 PIXEL_SCALES_PATH = Path(__file__).parent / "pixel_scales.csv"
 OUTPUT_DIR = Path(__file__).parent / "reprocess_output"
 
-WORKERS = os.cpu_count() or 16
+WORKERS = max(1, (os.cpu_count() or 16) - 2)
 
 MOVIE_FPS = 20
 MOVIE_IMSHOW_VMIN = 0
