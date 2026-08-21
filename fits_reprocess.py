@@ -80,8 +80,15 @@ WORKERS = max(1, (os.cpu_count() or 16) - 2)
 
 MOVIE_FPS = 20
 MOVIE_IMSHOW_VMIN = 0
-# Percentile used to auto-set the movie's imshow vmax from a sample of frames.
-MOVIE_IMSHOW_VMAX_PERCENTILE = 99.5
+# Frames are 8-bit greyscale (0-255) end to end, so the color scale is fixed
+# to the full native range instead of being guessed from a percentile sample
+# -- a percentile gets fooled whenever the bright spot is a small fraction of
+# the frame (it ends up measuring background, not signal).
+# The original dot_movie-Copy3.ipynb used a hardcoded vmax=100 with no
+# explanation; best guess is that early runs drove the LED at low voltage, so
+# the camera never approached saturation and 100 happened to sit above the
+# real peak -- fine for those runs, but not a real ceiling for this data.
+MOVIE_IMSHOW_VMAX = 255
 # Number of frames sampled up-front to derive vmax + profile-axis limits without
 # holding the whole run in memory.
 MOVIE_SAMPLE_FRAMES = 10
@@ -250,7 +257,10 @@ def fit_frame_image(path: Path, frame_num: int) -> dict:
             ts = ""
     out = _empty_row(filename=path.name, frame_num=frame_num, timestamp=ts)
     try:
-        img = np.array(Image.open(path).convert("L"), dtype=np.float64)
+        # Same 180 deg flip the FITS path applies (see fit_frame). PIL returns a
+        # top-down array and the converters write it into FITS verbatim, so the
+        # BMP/PNG array is identical to the FITS one and needs identical handling.
+        img = np.flip(np.array(Image.open(path).convert("L")), axis=(0, 1)).astype(np.float64)
         px_profile = np.sum(img, axis=0)
         py_profile = np.sum(img, axis=1)
     except Exception:
@@ -342,12 +352,12 @@ def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> N
 
 
 def _sample_movie_stats(loader, paths, n_sample: int = MOVIE_SAMPLE_FRAMES) -> dict:
-    """Sample a few frames spread across the run to derive vmax and profile-axis
-    limits without holding the whole run in memory. Mirrors dot_movie-Copy3's
-    quirky use of max-of-mins for profile minima (larger of per-frame minima),
-    which effectively hides low-outlier frames from the profile axis floor."""
+    """Sample a few frames spread across the run to derive the profile-plot
+    axis ceiling without holding the whole run in memory. vmax and the
+    profile floor are both fixed, cosmetic constants (see MOVIE_IMSHOW_VMAX)
+    rather than anything derived from data."""
     if not paths:
-        return {"vmax": 100.0,
+        return {"vmax": MOVIE_IMSHOW_VMAX,
                 "px_min": 0.0, "px_max": 1.0,
                 "py_min": 0.0, "py_max": 1.0}
     idxs = np.linspace(0, len(paths) - 1, num=min(n_sample, len(paths)), dtype=int)
@@ -359,15 +369,14 @@ def _sample_movie_stats(loader, paths, n_sample: int = MOVIE_SAMPLE_FRAMES) -> d
             continue
     if not samples:
         samples = [loader(paths[0])]
-    vmax = float(max(np.percentile(img, MOVIE_IMSHOW_VMAX_PERCENTILE) for img in samples))
     px_sums = [np.sum(img, axis=0) for img in samples]
     py_sums = [np.sum(img, axis=1) for img in samples]
     return {
-        "vmax":   vmax,
+        "vmax":   MOVIE_IMSHOW_VMAX,
         "px_max": float(max(p.max() for p in px_sums)),
-        "px_min": float(max(p.min() for p in px_sums)),  # max-of-mins, per dot_movie
+        "px_min": 0.0,
         "py_max": float(max(p.max() for p in py_sums)),
-        "py_min": float(max(p.min() for p in py_sums)),  # max-of-mins, per dot_movie
+        "py_min": 0.0,
     }
 
 
@@ -377,7 +386,7 @@ def _load_fits_frame(path) -> np.ndarray:
 
 
 def _load_image_frame(path) -> np.ndarray:
-    return np.array(Image.open(path).convert("L"))
+    return np.flip(np.array(Image.open(path).convert("L")), axis=(0, 1))
 
 
 def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | None = None) -> None:
@@ -425,10 +434,8 @@ def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | No
     ax_y.set_xlabel("counts")
     ax_x.grid(True)
     ax_y.grid(True)
-    # dot_movie's exact "headroom" formula: subtract 200 from both x limits;
-    # subtract 200 from y-min only. Match verbatim for direct comparability.
-    ax_x.set_ylim(stats["px_min"] - 200, stats["px_max"] - 200)
-    ax_y.set_xlim(stats["py_min"] - 200, stats["py_max"])
+    ax_x.set_ylim(stats["px_min"], stats["px_max"])
+    ax_y.set_xlim(stats["py_min"], stats["py_max"])
 
     ts_text = ax_img.text(0.02, 0.98, "", transform=ax_img.transAxes,
                           color="white", fontsize=12, verticalalignment="top",

@@ -207,8 +207,8 @@ class _StreamingMovie:
         ax_x.set_ylabel("counts")
         ax_y.set_xlabel("counts")
         ax_x.grid(True); ax_y.grid(True)
-        ax_x.set_ylim(stats["px_min"] - 200, stats["px_max"] - 200)
-        ax_y.set_xlim(stats["py_min"] - 200, stats["py_max"])
+        ax_x.set_ylim(stats["px_min"], stats["px_max"])
+        ax_y.set_xlim(stats["py_min"], stats["py_max"])
         ts_text = ax_img.text(0.02, 0.98, "", transform=ax_img.transAxes,
                               color="white", fontsize=12,
                               verticalalignment="top",
