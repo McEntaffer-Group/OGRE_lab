@@ -97,7 +97,8 @@ from fits_reprocess import (
     _fill_fit_results, _empty_row,
     _extract_timestamp, _extract_frame_num,
     _extract_timestamp_image, _extract_frame_num_image,
-    _detect_camera, _write_frames_csv, _mirror,
+    _detect_camera, _write_frames_csv, _mirror_for_run,
+    list_run_images, run_key,
     _discover_fits_runs, _discover_image_runs,
     _collect_summaries, _collect_reprocess_summaries,
     write_timing_summary, write_pixel_scales,
@@ -432,7 +433,7 @@ def _shmem_run(
     import tempfile
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     n_files = len(files)
     if n_files == 0:
@@ -527,7 +528,7 @@ def _shmem_run(
     df = (pd.DataFrame([r for r in results if r is not None])
             .sort_values("frame_num").reset_index(drop=True))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
@@ -559,7 +560,7 @@ def _stream_run(
     """Shared streaming pipeline used by both FITS and IMAGE processing."""
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     n_files = len(files)
     if n_files == 0:
@@ -630,7 +631,7 @@ def _stream_run(
     df = (pd.DataFrame([r for r in results if r is not None])
             .sort_values("frame_num").reset_index(drop=True))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
@@ -655,7 +656,8 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     out_csv = run_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(fits_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(fits_dir), "out_csv": str(out_csv),
         "n_files": 0, "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
@@ -710,14 +712,12 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                       video_fps: int = DEFAULT_VIDEO_FPS,
                       seconds_per_day=None) -> dict:
     runname = run_dir.name
-    images = sorted(
-        list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png")),
-        key=lambda p: p.name,
-    )
+    images = list_run_images(run_dir)
     out_csv = run_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(run_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(run_dir), "out_csv": str(out_csv),
         "n_files": len(images), "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }

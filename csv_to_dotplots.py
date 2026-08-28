@@ -126,22 +126,36 @@ def estimate_frame_rate_from_timestamps(df: pd.DataFrame) -> Optional[float]:
     return 1.0 / median_dt
 
 
-def lookup_pixel_scale(runname: str, path: Path = PIXEL_SCALES_PATH) -> Optional[float]:
-    """Return the pixel scale (arcsec/px) from pixel_scales.csv, or None if empty/missing."""
+def lookup_pixel_scale(runname: str, path: Path = PIXEL_SCALES_PATH,
+                       run_key: Optional[str] = None) -> Optional[float]:
+    """Return the pixel scale (arcsec/px) from pixel_scales.csv, or None if empty/missing.
+
+    Run names repeat across dates, so prefer an exact run_key ('{date}_{runname}')
+    match when the caller knows it. Falls back to the first row matching the bare
+    runname, which is all that pre-run_key files and standalone CLI use can offer."""
     if not path.exists():
         return None
     try:
         with open(path, newline="") as f:
-            for row in csv.DictReader(f):
-                if row.get("runname") != runname:
-                    continue
-                v = (row.get("pixel_scale_arcsec_per_pixel") or "").strip()
-                if not v:
-                    return None
-                return float(v)
+            rows = list(csv.DictReader(f))
     except Exception:
         return None
-    return None
+
+    match = None
+    if run_key:
+        match = next((r for r in rows if r.get("run_key") == run_key), None)
+    if match is None:
+        match = next((r for r in rows if r.get("runname") == runname), None)
+    if match is None:
+        return None
+
+    v = (match.get("pixel_scale_arcsec_per_pixel") or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +316,7 @@ def run(
     fwhm_max: float = DEFAULT_FWHM_MAX_PX,
     notes: str = "",
     require_fit_ok: bool = True,
+    run_key: Optional[str] = None,
 ) -> dict:
     """Produce plots + summary for one _frames.csv. Returns a dict of output paths."""
     csv_path = Path(csv_path)
@@ -319,7 +334,7 @@ def run(
     df = compute_derived(df)
 
     if pixel_scale is None:
-        looked_up = lookup_pixel_scale(runname)
+        looked_up = lookup_pixel_scale(runname, run_key=run_key)
         pixel_scale = looked_up if looked_up is not None else DEFAULT_PIXEL_SCALE
 
     if frame_rate is None:

@@ -118,6 +118,21 @@ _IMG_FRAMENUM_RE = re.compile(
     r"_?(\d{3,6})\s+\d{2}-\d{2}-\d{2}\s+\d{2}-\d{2}-\d{2}\.(?:bmp|png)$", re.IGNORECASE)
 _DIGITS_RE = re.compile(r"(\d+)")
 
+# Plots written INTO the run directory, next to the data. Image runs are
+# discovered by globbing *.png there, so without this filter a second pass over
+# the same run ingests its own plots as three extra "frames".
+#   *_reprocess.png  - csv_to_dotplots (this pipeline)
+#   bare *.png       - dot_movie-Copy3.ipynb, same three plots without the suffix
+# Only image runs have ever had the reprocess variants, but dot_movie writes to
+# the run directory too, so both are excluded.
+#
+# This is deliberately a denylist of known generated names rather than an
+# allowlist of camera-frame names: 13,872 real frames (e.g.
+# "1-833-stability3054.bmp") carry no timestamp and would be silently dropped by
+# a pattern match on the usual "name#### YY-MM-DD HH-MM-SS" convention.
+_GENERATED_PNG_RE = re.compile(
+    r"_(?:FFT|FWHM|position)(?:_reprocess)?\.png$", re.IGNORECASE)
+
 _CSV_COLS = [
     "frame_num", "filename", "timestamp",
     "mu_x", "mu_y", "sigma_x", "sigma_y", "fwhm_x", "fwhm_y",
@@ -313,6 +328,32 @@ def _detect_camera(runname: str) -> str:
     return "dalsa_genie" if "genie" in runname.lower() else "main_camera"
 
 
+def list_run_images(run_dir: Path) -> list[Path]:
+    """Input frames in a BMP/PNG run folder, excluding this pipeline's own plots.
+
+    Always use this instead of globbing the run directory directly — see
+    _GENERATED_PNG_RE for why."""
+    images = list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png"))
+    return sorted((p for p in images if not _GENERATED_PNG_RE.search(p.name)),
+                  key=lambda p: p.name)
+
+
+def date_prefix(run_dir: Path) -> str:
+    """The {date} folder a run lives under: '20250922_data/foo' -> '20250922'."""
+    date = run_dir.parent.name
+    return date[: -len("_data")] if date.endswith("_data") else date
+
+
+def run_key(run_dir: Path) -> str:
+    """Unique id for a run: '{date}_{runname}'.
+
+    Run names repeat across dates -- 'morning5237' is six separate runs, and
+    'minutely' is seven. Mirrored artifacts and pixel_scales rows are keyed on
+    this rather than the bare runname, so a later run cannot silently overwrite
+    an earlier one that happens to share its name."""
+    return f"{date_prefix(run_dir)}_{run_dir.name}"
+
+
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
@@ -326,6 +367,16 @@ def _mirror(src: Path, dest_name: str) -> None:
     shutil.copy2(src, OUTPUT_DIR / dest_name)
 
 
+def _mirror_for_run(src: Path, run_dir: Path, suffix: str | None = None) -> None:
+    """Mirror a run artifact into OUTPUT_DIR, date-prefixed so same-named runs
+    on different dates do not overwrite each other.
+
+    '{runname}_frames.csv' -> '{date}_{runname}_frames.csv'. Pass suffix to
+    rename the tail, e.g. suffix='_frames_prev.csv'."""
+    name = f"{run_dir.name}{suffix}" if suffix else src.name
+    _mirror(src, f"{date_prefix(run_dir)}_{name}")
+
+
 # ---------------------------------------------------------------------------
 # Post-CSV artifacts: plots (via csv_to_dotplots) and movie
 # ---------------------------------------------------------------------------
@@ -336,14 +387,14 @@ def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> N
     Failures are logged but non-fatal — a broken plot pass should not lose the
     frames CSV that was just written."""
     try:
-        result = csv_to_dotplots.run(out_csv, out_dir=run_dir)
+        result = csv_to_dotplots.run(out_csv, out_dir=run_dir, run_key=run_key(run_dir))
     except Exception as exc:
         print(f"    !! csv_to_dotplots failed for {runname}: {exc}")
         return
     for key in ("position_png", "fwhm_png", "fft_png", "summary_csv"):
         src = Path(result[key])
         try:
-            _mirror(src, src.name)
+            _mirror_for_run(src, run_dir)
         except Exception as exc:
             print(f"    !! could not mirror {src.name}: {exc}")
     print(f"    plots: {result['n_kept']}/{result['n_total']} frames kept "
@@ -520,8 +571,7 @@ def _discover_image_runs(root: Path) -> list[Path]:
         if (root / (date_dir.name + "_data")).exists():
             continue
         for run_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
-            images = list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png"))
-            if images:
+            if list_run_images(run_dir):
                 runs.append(run_dir)
     return runs
 
@@ -538,13 +588,14 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     out_csv = run_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(fits_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(fits_dir), "out_csv": str(out_csv),
         "n_files": 0, "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     files = sorted(glob.glob(str(fits_dir / "*.fits")))
     stats["n_files"] = len(files)
@@ -578,7 +629,7 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
 
     df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
 
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
@@ -595,14 +646,12 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                       make_movie: bool = True) -> dict:
     """Process one BMP/PNG run folder (no FITS conversion). Returns a stats dict."""
     runname = run_dir.name
-    images = sorted(
-        list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png")),
-        key=lambda p: p.name,
-    )
+    images = list_run_images(run_dir)
     out_csv = run_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(run_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(run_dir), "out_csv": str(out_csv),
         "n_files": len(images), "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
@@ -611,7 +660,7 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
         return stats
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     try:
         arr = np.array(Image.open(images[0]).convert("L"))
@@ -642,7 +691,7 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
 
     df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
 
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
@@ -671,7 +720,10 @@ def _collect_summaries(root: Path) -> None:
             df = pd.read_csv(p)
             if "runname" not in df.columns:
                 df.insert(0, "runname", p.parent.name)
-            _mirror(p, f"{p.parent.name}_summary.csv")
+            # runname alone is ambiguous across dates; stamp the unique key so
+            # the concatenated file can distinguish same-named runs.
+            df.insert(0, "run_key", run_key(p.parent))
+            _mirror(p, f"{date_prefix(p.parent)}_{p.parent.name}_summary.csv")
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -692,6 +744,7 @@ def _collect_reprocess_summaries(root: Path) -> None:
             df = pd.read_csv(p)
             if "runname" not in df.columns:
                 df.insert(0, "runname", p.parent.name)
+            df.insert(0, "run_key", run_key(p.parent))
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -703,8 +756,8 @@ def _collect_reprocess_summaries(root: Path) -> None:
     print(f"  collected {len(frames)} reprocess summary CSV(s) -> {out_path}")
 
 
-_TIMING_FIELDNAMES = ["batch_timestamp", "runname", "camera", "n_files", "n_ok",
-                      "elapsed_s", "fps", "source"]
+_TIMING_FIELDNAMES = ["batch_timestamp", "run_key", "runname", "camera",
+                      "n_files", "n_ok", "elapsed_s", "fps", "source"]
 
 
 def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None:
@@ -737,6 +790,7 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
         fps = s["n_files"] / max(s["elapsed_s"], 1e-9) if s["n_files"] > 0 else 0.0
         new_rows.append({
             "batch_timestamp": batch_ts,
+            "run_key":   s.get("run_key", ""),
             "runname":   s["runname"],
             "camera":    s["camera"],
             "n_files":   s["n_files"],
@@ -751,7 +805,7 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
     overall_fps = total_files / max(grand_elapsed_s, 1e-9)
     total_row = {
         "batch_timestamp": batch_ts,
-        "runname": "_TOTAL_", "camera": "",
+        "run_key": "", "runname": "_TOTAL_", "camera": "",
         "n_files": total_files, "n_ok": total_ok,
         "elapsed_s": round(grand_elapsed_s, 2),
         "fps": round(overall_fps, 1),
@@ -776,23 +830,29 @@ def write_pixel_scales(stats_list: list[dict]) -> None:
     (the underlying data may have changed shape between runs). User-filled fields
     (pixel_scale_arcsec_per_pixel, notes) are preserved even for current-batch runs.
     Runs NOT in the current batch are kept exactly as they were."""
-    fieldnames = ["runname", "camera", "image_shape",
+    fieldnames = ["run_key", "runname", "camera", "image_shape",
                   "pixel_scale_arcsec_per_pixel", "notes"]
     rows: dict[str, dict] = {}
     if PIXEL_SCALES_PATH.exists():
         try:
             with open(PIXEL_SCALES_PATH, newline="") as f:
                 for row in csv.DictReader(f):
-                    runname = row.get("runname")
-                    if not runname:
+                    # Rows written before run_key existed are keyed on the bare
+                    # runname. Keep them under that key so nothing the user typed
+                    # is lost; they are superseded once that run is processed again.
+                    key = row.get("run_key") or row.get("runname")
+                    if not key:
                         continue
-                    rows[runname] = {k: row.get(k, "") for k in fieldnames}
+                    rows[key] = {k: row.get(k, "") for k in fieldnames}
         except Exception as e:
             print(f"  warning: could not read existing pixel_scales.csv: {e}")
 
     for s in stats_list:
-        prev = rows.get(s["runname"], {})
-        rows[s["runname"]] = {
+        key = s.get("run_key") or s["runname"]
+        # Carry over anything the user filled in under the pre-run_key name.
+        prev = rows.get(key) or rows.pop(s["runname"], {})
+        rows[key] = {
+            "run_key": key,
             "runname": s["runname"],
             "camera": s["camera"] or prev.get("camera", ""),
             "image_shape": s["shape"] or prev.get("image_shape", ""),
@@ -803,8 +863,8 @@ def write_pixel_scales(stats_list: list[dict]) -> None:
     with open(PIXEL_SCALES_PATH, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        for runname in sorted(rows):
-            w.writerow(rows[runname])
+        for key in sorted(rows):
+            w.writerow(rows[key])
     print(f"  pixel_scales.csv updated ({len(rows)} unique runs preserved) "
           f"-> {PIXEL_SCALES_PATH}")
 
