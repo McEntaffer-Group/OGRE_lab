@@ -98,7 +98,7 @@ from fits_reprocess import (
     _extract_timestamp, _extract_frame_num,
     _extract_timestamp_image, _extract_frame_num_image,
     _detect_camera, _write_frames_csv, _mirror_for_run,
-    list_run_images, run_key,
+    list_run_images, run_key, output_dir_for,
     _discover_fits_runs, _discover_image_runs,
     _collect_summaries, _collect_reprocess_summaries,
     write_timing_summary, write_pixel_scales,
@@ -458,7 +458,7 @@ def _shmem_run(
     if make_movie:
         try:
             movie = _StreamingMovie(files, loader_frame,
-                                    run_dir / f"{runname}_reprocess.mp4",
+                                    out_csv.parent / f"{runname}_reprocess.mp4",
                                     fps=video_fps)
             print(f"    movie writer ready (nvenc={movie._nvenc_active}, "
                   f"fps={video_fps}, stride={video_stride})")
@@ -533,7 +533,7 @@ def _shmem_run(
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_csv.parent, run_dir, runname)
 
     return stats
 
@@ -570,7 +570,7 @@ def _stream_run(
     if make_movie:
         try:
             movie = _StreamingMovie(files, loader_frame,
-                                    run_dir / f"{runname}_reprocess.mp4",
+                                    out_csv.parent / f"{runname}_reprocess.mp4",
                                     fps=video_fps)
             print(f"    movie writer ready (nvenc={movie._nvenc_active}, "
                   f"fps={video_fps}, stride={video_stride})")
@@ -636,7 +636,7 @@ def _stream_run(
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_csv.parent, run_dir, runname)
 
     return stats
 
@@ -653,7 +653,8 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
                      seconds_per_day=None) -> dict:
     runname = run_dir.name
     fits_dir = run_dir / f"{runname}_fits"
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=False)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
         "runname": runname, "run_key": run_key(run_dir),
@@ -713,7 +714,8 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                       seconds_per_day=None) -> dict:
     runname = run_dir.name
     images = list_run_images(run_dir)
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=True)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
         "runname": runname, "run_key": run_key(run_dir),

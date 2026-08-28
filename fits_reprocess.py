@@ -21,12 +21,19 @@ Behavior:
   * Results written to original location AND mirrored to reprocess_output/ for easy review.
   * After the CSV is written, csv_to_dotplots.py runs on it (unless --no-plots),
     producing {runname}_{position,FWHM,FFT}_reprocess.png and
-    {runname}_summary_reprocess.csv in the run folder (mirrored to reprocess_output/).
+    {runname}_summary_reprocess.csv (mirrored to reprocess_output/).
     The `_reprocess` suffix lets these coexist with the dot_movie-Copy3.ipynb outputs
     for side-by-side comparison; no existing files are overwritten.
-  * A movie is written to {run_dir}/{runname}_reprocess.mp4 (unless --no-movie).
+  * A movie is written alongside them as {runname}_reprocess.mp4 (unless --no-movie).
     Frames are streamed lazily so runs of any size fit in memory. Movies are NOT
     mirrored to reprocess_output/ (they can be large).
+  * OUTPUT LOCATION follows dot_movie-Copy3: artifacts sit one level above the
+    frames, never inside the folder holding them (see output_dir_for).
+      FITS  {date}_data/{runname}/       <- outputs, beside {runname}_fits/
+      IMAGE {date}/                      <- outputs, beside {runname}/
+    Keeping them out of the scanned folder is also what stops a re-run from
+    reading its own plots back as input frames. Image runs written under the
+    older layout can be swept up with --migrate-image-outputs.
   * All *_summary.csv truth files under ROOT are concatenated into
     reprocess_output/all_runs_summary.csv (read-only pass, originals untouched).
     All *_summary_reprocess.csv from this pipeline go into all_runs_summary_reprocess.csv.
@@ -45,6 +52,8 @@ Run from the repo root:
     python fits_reprocess.py --no-movie            # skip .mp4 generation
     python fits_reprocess.py --no-plots            # skip plots + summary CSV
     python fits_reprocess.py --dry-run             # list work, don't process
+    python fits_reprocess.py --migrate-image-outputs          # preview the sweep
+    python fits_reprocess.py --migrate-image-outputs --apply  # perform it
 """
 
 from __future__ import annotations
@@ -344,6 +353,21 @@ def date_prefix(run_dir: Path) -> str:
     return date[: -len("_data")] if date.endswith("_data") else date
 
 
+def output_dir_for(run_dir: Path, is_image_run: bool) -> Path:
+    """Where a run's artifacts (CSV, plots, summary, movie) are written.
+
+    Follows dot_movie-Copy3's convention: outputs sit one level above the frames,
+    never inside the folder holding them. A FITS run keeps its data in
+    {runname}_fits/, so its outputs belong in the run dir -- which is where
+    dot_movie already puts {runname}_position.png and {runname}_summary.csv. An
+    image run keeps frames in the run dir itself, so its outputs go up into the
+    {date}/ folder rather than being mixed in with the camera data.
+
+    Keeping outputs out of the scanned folder is also what stops a re-run from
+    reading its own plots back as input frames."""
+    return run_dir.parent if is_image_run else run_dir
+
+
 def run_key(run_dir: Path) -> str:
     """Unique id for a run: '{date}_{runname}'.
 
@@ -381,13 +405,14 @@ def _mirror_for_run(src: Path, run_dir: Path, suffix: str | None = None) -> None
 # Post-CSV artifacts: plots (via csv_to_dotplots) and movie
 # ---------------------------------------------------------------------------
 
-def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> None:
+def _generate_plots_and_summary(out_csv: Path, out_dir: Path, run_dir: Path,
+                                runname: str) -> None:
     """Run csv_to_dotplots on out_csv and mirror the artifacts to OUTPUT_DIR.
 
     Failures are logged but non-fatal — a broken plot pass should not lose the
     frames CSV that was just written."""
     try:
-        result = csv_to_dotplots.run(out_csv, out_dir=run_dir, run_key=run_key(run_dir))
+        result = csv_to_dotplots.run(out_csv, out_dir=out_dir, run_key=run_key(run_dir))
     except Exception as exc:
         print(f"    !! csv_to_dotplots failed for {runname}: {exc}")
         return
@@ -549,6 +574,63 @@ def _generate_movie_from_images(image_paths: list[Path], out_path: Path) -> None
 # Run discovery
 # ---------------------------------------------------------------------------
 
+def _run_output_names(runname: str) -> list[str]:
+    """Exact artifact filenames this pipeline writes for a run.
+
+    Listed explicitly rather than pattern-matched so the migration sweep can
+    never touch a camera frame that happens to have an unusual name."""
+    return [
+        f"{runname}_frames.csv",
+        f"{runname}_summary_reprocess.csv",
+        f"{runname}_reprocess.mp4",
+        f"{runname}_FFT_reprocess.png",
+        f"{runname}_FWHM_reprocess.png",
+        f"{runname}_position_reprocess.png",
+    ]
+
+
+def migrate_image_outputs(root: Path, apply: bool = False) -> int:
+    """Move image-run artifacts out of the frame folder and up into {date}/.
+
+    Image runs used to write their outputs into the same directory as the .bmp
+    frames. output_dir_for now puts them one level up, matching how FITS runs
+    (and dot_movie-Copy3) keep outputs beside the data rather than inside it.
+    This sweeps the leftovers from the old layout.
+
+    Where the new location already holds a copy, the stale one is deleted --
+    the parent copy was written by the current code. Otherwise the file moves.
+    Dry-run unless apply=True. Returns the number of files affected."""
+    moved = deleted = 0
+    for run_dir in _discover_image_runs(root):
+        dest_dir = output_dir_for(run_dir, is_image_run=True)
+        for name in _run_output_names(run_dir.name):
+            src = run_dir / name
+            if not src.exists():
+                continue
+            dest = dest_dir / name
+            if dest.exists():
+                print(f"  {'delete ' if apply else 'would delete '}{src}"
+                      f"\n      (superseded by {dest})")
+                if apply:
+                    src.unlink()
+                deleted += 1
+            else:
+                print(f"  {'move   ' if apply else 'would move   '}{src}\n      -> {dest}")
+                if apply:
+                    shutil.move(str(src), str(dest))
+                moved += 1
+
+    total = moved + deleted
+    if not total:
+        print("  nothing to migrate; image-run outputs are already in {date}/.")
+    else:
+        verb = "Migrated" if apply else "Would migrate"
+        print(f"\n  {verb} {total} file(s): {moved} moved, {deleted} deleted as superseded.")
+        if not apply:
+            print("  Re-run with --apply to perform it.")
+    return total
+
+
 def _discover_fits_runs(root: Path) -> list[Path]:
     """Find run folders with a *_fits subfolder under *_data/ directories."""
     runs = []
@@ -585,7 +667,8 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     """Process one FITS run folder. Returns a stats dict."""
     runname = run_dir.name
     fits_dir = run_dir / f"{runname}_fits"
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=False)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
         "runname": runname, "run_key": run_key(run_dir),
@@ -635,9 +718,9 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_dir, run_dir, runname)
     if make_movie:
-        _generate_movie_from_fits(files, run_dir / f"{runname}_reprocess.mp4")
+        _generate_movie_from_fits(files, out_dir / f"{runname}_reprocess.mp4")
 
     return stats
 
@@ -647,7 +730,8 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
     """Process one BMP/PNG run folder (no FITS conversion). Returns a stats dict."""
     runname = run_dir.name
     images = list_run_images(run_dir)
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=True)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
         "runname": runname, "run_key": run_key(run_dir),
@@ -697,9 +781,9 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_dir, run_dir, runname)
     if make_movie:
-        _generate_movie_from_images(images, run_dir / f"{runname}_reprocess.mp4")
+        _generate_movie_from_images(images, out_dir / f"{runname}_reprocess.mp4")
 
     return stats
 
@@ -707,6 +791,21 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
 # ---------------------------------------------------------------------------
 # Summaries and pixel scales
 # ---------------------------------------------------------------------------
+
+def _artifact_run_key(path: Path, suffix: str) -> tuple[str, str]:
+    """(run_key, runname) for a collected artifact named {runname}{suffix}.
+
+    Handles both output layouts. A FITS run's artifacts sit inside the run dir
+    ({date}_data/{runname}/), while an image run's sit one level up in {date}/.
+    The runname always comes from the filename, so it is right either way; only
+    where to find the date differs."""
+    runname = path.name[: -len(suffix)]
+    parent = path.parent
+    date = date_prefix(parent) if parent.name == runname else parent.name
+    if date.endswith("_data"):
+        date = date[: -len("_data")]
+    return f"{date}_{runname}", runname
+
 
 def _collect_summaries(root: Path) -> None:
     """Collect all dot_movie-style *_summary.csv truth files into OUTPUT_DIR.
@@ -718,12 +817,13 @@ def _collect_summaries(root: Path) -> None:
             continue
         try:
             df = pd.read_csv(p)
+            key, runname = _artifact_run_key(p, "_summary.csv")
             if "runname" not in df.columns:
-                df.insert(0, "runname", p.parent.name)
+                df.insert(0, "runname", runname)
             # runname alone is ambiguous across dates; stamp the unique key so
             # the concatenated file can distinguish same-named runs.
-            df.insert(0, "run_key", run_key(p.parent))
-            _mirror(p, f"{date_prefix(p.parent)}_{p.parent.name}_summary.csv")
+            df.insert(0, "run_key", key)
+            _mirror(p, f"{key}_summary.csv")
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -742,9 +842,10 @@ def _collect_reprocess_summaries(root: Path) -> None:
     for p in sorted(root.rglob("*_summary_reprocess.csv")):
         try:
             df = pd.read_csv(p)
+            key, runname = _artifact_run_key(p, "_summary_reprocess.csv")
             if "runname" not in df.columns:
-                df.insert(0, "runname", p.parent.name)
-            df.insert(0, "run_key", run_key(p.parent))
+                df.insert(0, "runname", runname)
+            df.insert(0, "run_key", key)
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -882,6 +983,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip csv_to_dotplots plots + summary (default: on)")
     parser.add_argument("--no-movie", action="store_true",
                         help="skip .mp4 movie generation (default: on)")
+    parser.add_argument("--migrate-image-outputs", action="store_true",
+                        help="move image-run artifacts out of the frame folder up "
+                             "into {date}/, then exit (dry-run unless --apply)")
+    parser.add_argument("--apply", action="store_true",
+                        help="with --migrate-image-outputs, actually move/delete files")
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -890,6 +996,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    if args.migrate_image_outputs:
+        migrate_image_outputs(root, apply=args.apply)
+        return 0
 
     fits_runs = _discover_fits_runs(root)
     image_runs = _discover_image_runs(root)
