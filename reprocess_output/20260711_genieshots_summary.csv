@@ -1,0 +1,2 @@
+filename,total frames,good frames,start time,stop time,notes,frame interval (s),x position (px),x pos std (px),y position (px),y pos std (px),x position (as),x pos std (as),y position (as),y pos std (as),FWHM x (px),FWHM x std (px),FWHM y (px),FWHM y std (px)
+genieshots,5746,5746,26-07-10 09-07-38,26-07-14 09-07-00,second primary test,60,0.8202008307188379,1.0524734029468943,9.564837058142754,4.195655377540937,0.12303012460782567,0.15787101044203414,1.434725558721413,0.6293483066311405,192.3197622334913,4.995516268131057,199.02418826701327,4.072414482460264

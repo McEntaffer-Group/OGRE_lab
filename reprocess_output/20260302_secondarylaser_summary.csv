@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+secondarylaser,2572,26-03-02 17-04-30,26-03-04 11-56-24,secondary has laser pointed at it,0.016666666666666666,-5.594971719071963,3.9238671871085278,6.5905989219943955,1.9339770472505504,1.8220575926002065,0.14529268651076369,2.315257128579302,0.3596925448619223

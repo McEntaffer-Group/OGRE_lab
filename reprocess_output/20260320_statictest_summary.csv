@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+statictest,5660,26-03-20 13-23-22,26-03-24 11-43-39,static test of laser stand,0.016666666666666666,5.8285118547547246,3.324691319224737,28.520321875480896,11.647082109506815,2.192256145861482,0.20578363035588385,2.572640487807516,0.4599050805337181

@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+replacedprimary,5711,26-02-06 16-32-41,26-02-10 15-44-18,"primary was taken out for measurement. Replaced, with new aluminum brackets.",0.016666666666666666,8.289773927385093,2.504740317215698,-15.358604149911685,7.784398668480468,1.3924532947772392,0.33289000278941233,2.85459646111171,0.6800583447890813

@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+zoeystaticgenie,7269,26-04-15 12-34-46,26-04-20 14-00-49,static test of zoey laser stand,0.016666666666666666,-1.758884253962825,0.3163893210703344,1.4058279622312972,0.48423175535693397,41.33812818474182,1.1097005081924591,55.10920638988398,1.3603568986327117

@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+thanksgiving,8557,25-11-25 14-17-25,25-12-01 12-55-43,"thanksgiving break, pumps on",0.016666666666666666,0.5413351171490123,2.6159962712113396,1.5403425412792062,4.827099212901586,62.766534474938,0.9973916122008981,59.01709661131874,0.9276804861894282

@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+newsecondary,3999,26-01-30 16-37-16,26-02-02 11-16-02,replaced secondary foam and recollimated. Very cold outside.,0.016666666666666666,4.468223853822907,1.2418119224973168,14.603384719262683,2.6823868672909943,1.278733734336029,0.1933669972762569,2.8207140448986703,0.5367952501452098

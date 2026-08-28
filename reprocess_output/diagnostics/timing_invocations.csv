@@ -1,0 +1,5 @@
+n,script,args,runs,frames,sum_run_s,wall_min,frames_per_s
+1,fits_reprocess.py,--run postspie,2,11499,505.5,8.4,22.75
+2,fits_reprocess.py,--run postspie,2,11499,824.1,110.1,13.95
+3,fits_reprocess_parallel.py,,94,503407,164345.0,2746.3,3.06
+4,fits_reprocess_parallel.py,,94,503527,165704.0,2770.2,3.04

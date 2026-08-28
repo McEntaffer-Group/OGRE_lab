@@ -1,0 +1,261 @@
+OGRE LAB - OUTSTANDING ITEMS
+Compiled 2026-08-28, from the fits_reprocess_parallel review session.
+Branch: reprocessdata (commits ccc3796, 61e7304 - both unpushed)
+
+Status key:
+  [ ]  not started
+  [~]  partially addressed
+  [x]  done this session (listed only where it changes what comes next)
+
+Done this session, for context:
+  [x] Phantom-PNG self-ingestion bug fixed (list_run_images)
+  [x] Runname collision fixed (run_key = {date}_{runname})
+  [x] Image-run outputs moved out of the frame folder into {date}/
+  [x] compare_pipelines.py written - fit-failure, truth, timing, collision reports
+
+
+================================================================================
+1. NEEDS A DECISION FROM YOU
+================================================================================
+
+[ ] 1.1  FWHM cut: 500 vs 1000
+         dot_movie-Copy3.ipynb cell 18 filters fwhm_max=500.
+         fits_reprocess.py / csv_to_dotplots.py use FWHM_MAX_PX = 1000.
+         27 runs keep frames the notebook would drop. This is the single
+         biggest remaining source of divergence from truth. Deliberately not
+         changed - picking one alters results for those 27 runs.
+         Once settled, re-run compare_pipelines.py --truth and the
+         DIVERGENT_TRUTH_GATE category should collapse.
+
+[ ] 1.2  Position baseline convention
+         Both pipelines report position as mu - mu[0] over SURVIVING frames
+         (notebook: mu_x_rel; ours: csv_to_dotplots.compute_derived).
+         If a quality cut removes frame 0, every position in the run shifts by
+         a constant. postspiegenie diverges 28% in y position from exactly one
+         dropped frame. Recommend baselining on the median instead. Changes
+         published numbers, so it is a group call.
+
+[ ] 1.3  Duplicate run names - rename or discard?
+         10 names cover 30 distinct runs: morning5237 x6, minutely x7,
+         fanoff5237 x3, fanoff x2, noon5237 x2, laserdaytest x2, overnight x2,
+         warming x2, and others. run_key fixes the mechanics so outputs no
+         longer overwrite, but the names are still ambiguous to a human.
+         Your earlier note said "or just trashbin those items."
+         See reprocess_output/diagnostics/runname_collisions.csv
+
+[ ] 1.4  Clear reprocess_output/ before the next full run?
+         It currently mixes 74 stale bare-name mirrors with the new dated ones.
+         The tooling tolerates both and flags the stale ones, but carrying two
+         naming schemes is avoidable.
+
+[ ] 1.5  Whether to stop tracking generated data in git (see section 6)
+
+
+================================================================================
+2. SCIENCE CORRECTNESS - FLAGGED, NOT ADDRESSED
+================================================================================
+
+[ ] 2.1  *** pixel_scales.csv is 100% empty - all 76 runs ***
+         HIGHEST PRIORITY. Every run falls back to the hardcoded
+         DEFAULT_PIXEL_SCALE = 0.15 arcsec/px, inherited from
+         dot_movie-Copy3's hardcoded *0.15.
+
+         But main_camera spans EIGHT distinct image shapes:
+             480x640     36 runs        1216x1936    2 runs
+             1920x2560   16 runs        1944x2592    2 runs
+             1024x1280    6 runs        1200x1600    1 run
+             1080x1920    5 runs        960x1280     1 run
+         dalsa_genie:    1216x1936      7 runs
+
+         If those reflect binning or ROI changes on one sensor, the true
+         arcsec/px varies by up to ~4x across runs, and the "(as)" columns in
+         every summary are wrong for most of them - meaning FWHM and position
+         in arcsec are NOT comparable across runs.
+
+         This is cheap to check and unlike 1.1 it is not a matter of
+         preference: there is a correct answer. Do this first.
+
+[ ] 2.2  Camera detection is a substring test
+         fits_reprocess._detect_camera: "genie" in runname.lower().
+         Two main_camera runs have image shape 1216x1936 - the exact
+         dalsa_genie sensor shape. Either the heuristic is misclassifying
+         them, or those runs used different optics. Confirm which.
+
+[ ] 2.3  Seven runs with heavy fit failure - mechanism known, cause not
+         bridgetstatic   6450/6743 rejected (95.7%) - effectively unusable
+         newsecondary    2875/3999 (71.9%)
+         overnight        737/1090 (67.6%)
+         fansoff         2191/3991 (54.9%)
+         longweekend     3414/6970 (49.0%)
+         laserweekend     988/3995 (24.7%)
+         allmetal         649/3922 (16.5%)
+
+         Established: curve_fit NEVER fails to converge - not once across
+         417,700 frames. Every failure is a converged fit that railed to the
+         sigma upper bound (profile.size/2), i.e. locked onto the background
+         instead of the dot, then got rejected by the FWHM gate.
+         Not established: why the dot is unfindable in these runs.
+         See reprocess_output/diagnostics/fit_failures_by_run.csv
+
+[ ] 2.4  allmetal is the cleanest lead into 2.3
+         X fits fine at 8-13 px while Y pegs at 1021-1206 px - exactly the
+         1024-tall sigma bound. A clean axis-specific failure should be
+         tractable to diagnose.
+
+[ ] 2.5  Unverified loose end: statictestgenie
+         14% divergence on FWHM y std traced to a single gate-dropped frame.
+         Explained as one extreme outlier inflating our std; plausible but
+         never actually confirmed.
+
+
+================================================================================
+3. ORIGINAL TODO LIST - STILL OPEN
+================================================================================
+
+[~] 3.1  Identify runs with laser splotch AND LED dot
+         n_peaks_x / n_peaks_y already exist per frame, but they are NOT a
+         usable classifier: they read 100% multi-peak on every genie run,
+         flagging camera structure rather than a second light source.
+
+         Shortlist worth eyeballing first:
+             bridgetstatic   median 4 peaks,  100% multipeak
+             longweekend     median 24 peaks,  71.9% multipeak
+         The ~100-folder visual inspection is still outstanding. A better
+         discriminator (peak separation + relative amplitude) would help.
+
+[x] 3.2  Comparison code vs bmp_to_fits -> dot_movie-Copy3
+         Done: compare_pipelines.py --truth.
+         Current: 17 MATCH (within 0.1%), 2 NEAR, 3 DIVERGENT_TRUTH_GATE,
+         6 DIVERGENT_WITH_FAILURES, 0 unexplained.
+
+[x] 3.3  Figure out which frames fail fit and why
+         Done: compare_pipelines.py --fits classifies every failure by cause.
+
+[x] 3.4  Distinguish runs by name and date / does it overwrite?
+         Answered: yes, it was overwriting - keyed on runname alone.
+         Fixed via run_key. Duplicate keys in all_runs_summary_reprocess.csv
+         went from 18 to 0. Per-run copies on E: were never affected.
+
+
+================================================================================
+4. PERFORMANCE
+================================================================================
+
+[ ] 4.1  matplotlib is ~75% of parallel runtime - completely untouched
+         postspie: 19.9 min total vs ~4.6 min fit-only.
+         In the notebook pipeline, curve fitting is under 2 minutes of a
+         210-minute run; the animation is 155 minutes.
+         The 4.2x speedup came from overlapping the movie with the fit, not
+         from faster fitting. The next big multiple is in the movie path:
+           - render composite frames with numpy/PIL straight into ffmpeg
+             instead of going through a matplotlib figure, or
+           - stride / downsample the movie, or make it opt-in
+
+[ ] 4.2  Never measured a clean fit-only baseline
+         --no-movie already exists on both scripts. One run would quantify
+         exactly how much the movie costs.
+
+
+================================================================================
+5. FULL RE-RUN
+================================================================================
+
+[ ] 5.1  Re-run everything (~46 h) under the new naming, paths, and
+         phantom-free discovery.
+         Until then the aggregates mix old and new. Example: maxtest1 still
+         reports 103 frames / 100 good, which is the pre-fix count including
+         its 3 phantom PNG rows.
+         Ideally settle 1.1 and 2.1 BEFORE spending the 46 hours.
+
+
+================================================================================
+6. GIT / RASPBERRY PI DISK - NOTHING EXECUTED
+================================================================================
+
+Facts measured this session:
+    .git pack           370 MB (compressed)
+    HEAD checkout     1,815 MB across 883 files
+    temperature/      1,538 MB tracked (291 files) - 85% of the repo
+    reprocess_output/   264 MB tracked
+    working tree        4.5 GB (fft_output/ 2.3 GB is gitignored)
+
+Key point: a separate branch does NOT help. All branches share one object
+database and git clone fetches every reachable object. main already contains
+all 291 temperature files.
+
+[ ] 6.1  Pi clone strategy - commands drafted but untested:
+             git clone --filter=blob:none --depth 1 --single-branch \
+                 --branch main --no-checkout <url>
+             cd OGRE_lab
+             git sparse-checkout set --no-cone '/*' '!/temperature/*.csv' \
+                 '!/reprocess_output/'
+             git checkout main
+
+[ ] 6.2  Stop tracking generated data going forward
+         git rm --cached -r on temperature/*.csv and reprocess_output/,
+         plus .gitignore entries. Stops future growth; does NOT shrink
+         existing history.
+
+[ ] 6.3  temperature_log_thanksgiving.csv is in history FIVE times at
+         60 / 40 / 32 / 25 / 60 MB. An append-only log re-committed as it
+         grew. This pattern is most of the 370 MB and will keep compounding.
+
+[ ] 6.4  The Pi's flight code (RISEflightcode.py, RISEBMP388.py,
+         RISELSM303.py) lives INSIDE temperature/ next to the logs, which is
+         what makes sparse checkout awkward. Consider splitting code from data.
+
+[ ] 6.5  History rewrite (git filter-repo / BFG) would actually shrink the
+         pack, but force-pushes and breaks every existing clone.
+         RECOMMENDED: do not do this without group agreement first.
+
+[ ] 6.6  Root cause untouched: the Pi keeps generating 60 MB+ logs with no
+         rotation or retention policy. Fixing the git side alone will not
+         stop it filling up again.
+
+[ ] 6.7  Two commits unpushed (ccc3796, 61e7304)
+
+[ ] 6.8  __pycache__/ is untracked noise - should be gitignored
+
+
+================================================================================
+7. MINOR HYGIENE
+================================================================================
+
+[ ] 7.1  Stray manual file on E::
+         20260624_data/bridgetstatic/bridgetstatic_frames - Copy.csv
+         Not pipeline output. (Confirmed: there is NO anti-clobber rename
+         logic anywhere in the code - the only "previous" mechanism is
+         _frames_prev.csv copied into reprocess_output/, never a rename in
+         the run folder.)
+
+[ ] 7.2  Loose camera frame outside any run folder:
+         20250917/1-833-stability 25-09-17 08-46-31.bmp
+         Not discovered as a run, and it now shares that directory with
+         image-run outputs.
+
+[ ] 7.3  all_runs_summary.csv is a schema mix - 28 rows written by the
+         notebook (unsuffixed columns, already in arcsec) plus 10 rows from
+         an older csv_to_dotplots (suffixed (px)/(as)). compare_pipelines
+         skips the 10, but the file itself stays confusing.
+
+[ ] 7.4  compare_pipelines.py hardcodes the hand-transcribed notebook timings
+         for postspie / postspiegenie (they are prose in timing_info.txt, not
+         machine output). Needs manual updating if anything is re-timed.
+
+[ ] 7.5  The file you referred to as run_timings.txt is actually
+         timing_info.txt. reprocess_output/run_timings.csv is the
+         machine-written one. Worth renaming one of them to reduce confusion.
+
+
+================================================================================
+SUGGESTED ORDER
+================================================================================
+
+1.  2.1  pixel scale - cheap, has a correct answer, potentially invalidates
+         arcsec values across most runs
+2.  1.1  settle the FWHM cut
+3.  1.2  settle the position baseline
+4.  2.3  investigate the bad runs, starting with allmetal (2.4)
+5.  5.1  full re-run once 1.1 / 2.1 are settled
+6.  4.1  attack the matplotlib movie path
+7.  6.x  git / Pi disk, with 6.5 raised to the group first
