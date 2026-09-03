@@ -1,41 +1,36 @@
 # Test plan — fit correctness, parallel equivalence, truth agreement
 
 Companion to `FIT_DIAGNOSIS_HANDOFF.md`. Nothing here is written yet; this is the
-proposal. Tests marked **DISCUSS** need a decision from you before I build them.
+proposal. Tests marked **DISCUSS** need a decision before I build them.
 
-Every claim below about current behaviour was checked against the repo or the
-CSVs this session. Where a number is quoted from the handoff rather than re-run,
-it says so.
+Revision 2 — reworked after review. Changes from r1 are listed in §9.
 
 ---
 
 ## 0. Ground rules
 
 - **Runner:** `pytest` (installed into `ReverseTelescopeDot/.venv` this session,
-  9.1.1). Run from the repo root:
+  9.1.1). From the repo root:
   `D:/Users/jad507/PycharmProjects/ReverseTelescopeDot/.venv/Scripts/python.exe -X utf8 -m pytest tests/ -v`
-- **`-X utf8` is required** — the default cp1252 console encoding crashes on
-  non-ASCII output (handoff §4).
-- **Offline by default.** Every test in groups A–E runs with `E:` unmounted,
-  against committed fixtures. The handful that need real files are marked
-  `@pytest.mark.needs_data` and auto-skip when `E:` is absent.
-- **Speed target:** the default suite finishes in under ~10 s. Anything slower
-  goes behind `@pytest.mark.slow` and is deselected by default.
-- **Tests get written red first.** The point of most of group C is that they fail
-  against today's `fits_reprocess.py`. I will not touch the pipeline until you've
-  seen the red run.
+- **`-X utf8` is required** — default cp1252 crashes on non-ASCII output.
+- **Offline by default.** Everything except two tests runs with `E:` unmounted.
+  Those two are `@pytest.mark.needs_data` and auto-skip.
+- **Nothing is resolution-locked.** Every threshold derives from `profile.size`.
+  Synthetic tests sweep 64 → 2592 px. See §2.
+- **Speed target:** whole suite under ~15 s. There is no slow tier any more.
+- **Written red first.** I will not touch `fits_reprocess.py` until you've seen
+  the red run.
 
-### Markers (`tests/conftest.py`)
+### `tests/conftest.py`
 
 ```python
-import os, numpy as np, pytest
+import numpy as np, pytest
 from pathlib import Path
 
 E_DRIVE = Path("E:/Reverse Telescope Test Data")
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "needs_data: requires the E: data drive")
-    config.addinivalue_line("markers", "slow: minutes, not seconds")
 
 def pytest_collection_modifyitems(config, items):
     if E_DRIVE.exists():
@@ -47,18 +42,39 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session")
 def profiles():
-    """Golden 1-D profiles extracted from real frames. See tests/make_fixtures.py."""
+    """Golden 1-D profiles from real frames. See tests/make_fixtures.py."""
     return dict(np.load(Path(__file__).parent / "fixtures" / "profiles.npz"))
+```
+
+### `tests/synth.py` — one synthetic-profile helper, used everywhere
+
+```python
+import numpy as np
+
+def synth(size, mu_frac=0.523, sigma=4.0, amp=926.0, offset=21000.0,
+          noise=60.0, seed=0):
+    """A realistic profile at arbitrary resolution.
+
+    Defaults match measured allmetal values: 4% dot contrast on a 21000 pedestal,
+    RMS noise 60 (handoff section 2 -- NOT the invented 174 that drove the
+    over-built rewrite). mu is a *fraction* of size so the spot sits off-centre
+    at every resolution.
+    """
+    x = np.arange(size, dtype=np.float64)
+    mu = mu_frac * size
+    prof = amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + offset
+    if noise:
+        prof = prof + np.random.default_rng(seed).normal(0, noise, size)
+    return prof, mu
 ```
 
 ---
 
 ## 1. The fixtures
 
-`tests/make_fixtures.py` — run once, with `E:` mounted, output committed. Not a
-test; a generator. Stores **only profiles**, never expected fit values, so the
-truth comparison in group D re-derives truth live rather than trusting a baked
-number.
+`tests/make_fixtures.py` — run once with `E:` mounted, output committed. A
+generator, not a test. Stores **only profiles**, never expected fit values, so
+the truth comparison re-derives truth live instead of trusting a baked number.
 
 ```python
 """Extract 1-D profiles from real frames into a committed .npz so the suite runs
@@ -95,98 +111,174 @@ print(f"wrote {dest}  ({dest.stat().st_size/1024:.0f} KB, {len(out)} profiles)")
 
 **Why these six.** Frames 11 and 18 are the handoff's verified railing anchors
 with known-good answers (μ_y = 535.267 / 530.611, σ_y = 4.406 / 5.353). Frames 1,
-101, 501 are the ones §1.1 already characterised as healthy. `frosty` frame 1 is
-the false-positive guard: I confirmed from `reprocess_output/frosty_frames.csv`
-that it fits at μ=(1385.6, 1033.3), σ=(173.3, 171.9) with amp 20228 against
-offset 34123 — a genuinely broad spot, nowhere near a bound. A "fix" that
-rejects it is over-corrected (handoff §2, §1.5).
+101, 501 were characterised as healthy in §1.1. `frosty` frame 1 is the
+false-positive guard: from `reprocess_output/frosty_frames.csv` it fits at
+μ=(1385.6, 1033.3), σ=(173.3, 171.9), amp 20228 vs offset 34123 — a genuinely
+broad spot nowhere near a bound. A "fix" that rejects it is over-corrected.
 
-Expected size ~100–150 KB compressed. Committed.
+These two runs also happen to be different resolutions (allmetal 1280×1024,
+frosty ≥2048 rows), which helps — but real data covers no *small* frames at all,
+so resolution independence is covered synthetically in group R rather than here.
 
 ---
 
-## 2. Master table
+## 2. Group R — resolution independence
+
+Your point, and it's a real gap in r1. The bug itself is resolution-scaled:
+`_estimate_sigma` clips at `profile.size / 4` and the σ bound is
+`profile.size / 2`, so a 64 px frame and a 2592 px frame fail *differently*. No
+test may hardcode 1024, and no test may assume a minimum size.
+
+```python
+SIZES = [64, 128, 256, 512, 1024, 2592]
+```
+
+### R1 — estimator never saturates, at any size
+
+```python
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("sigma", [2.0, 5.0, 20.0])
+def test_estimator_does_not_saturate_at_any_resolution(size, sigma):
+    if sigma * 8 > size:
+        pytest.skip(f"sigma={sigma} spot does not fit in a {size}px frame")
+    prof, _ = synth(size, sigma=sigma)
+    est = fr._estimate_sigma(prof, np.arange(size, dtype=np.float64),
+                             float(prof.argmax()))
+    ceiling = size / 4.0
+    assert not np.isclose(est, ceiling), (
+        f"estimator pinned at its ceiling {ceiling:.1f} (size={size}, true sigma={sigma})")
+    assert sigma / 3.0 < est < sigma * 3.0, (
+        f"est={est:.2f} not within 3x of true sigma={sigma} (size={size})")
+```
+
+The factor-of-3 band is deliberately loose. The estimator's job is to *seed the
+ladder*, not to be the answer — §5.1's known 2× overshoot is fine and the
+residual-scored ladder cleans it up. Asserting tighter would re-invite the
+over-built version you rejected.
+
+### R2 — the fit recovers a known spot, at any size
+
+```python
+@pytest.mark.parametrize("size", SIZES)
+def test_fit_recovers_known_spot_at_any_resolution(size):
+    true_sigma = max(2.0, size / 200.0)          # scales with the frame
+    prof, true_mu = synth(size, sigma=true_sigma)
+    amp, mu, sigma, offset = fr._fit_one_profile(prof)
+    assert mu    == pytest.approx(true_mu,    abs=0.5)
+    assert sigma == pytest.approx(true_sigma, rel=0.15)
+```
+
+### R3 — a legitimately huge dot is not mangled
+
+Directly from your "a dot can be FWHM greater than 500, and I don't see why it
+can't be greater than 1000". A spot occupying a fifth of the frame is physically
+fine and the fit must return it, not rail.
+
+```python
+@pytest.mark.parametrize("size", [512, 1024, 2592])
+def test_very_broad_spot_is_fit_not_railed(size):
+    true_sigma = size / 5.0                      # FWHM ~ 0.47 * size
+    prof, true_mu = synth(size, sigma=true_sigma, amp=20000.0, offset=34000.0)
+    amp, mu, sigma, offset = fr._fit_one_profile(prof)
+    assert mu    == pytest.approx(true_mu,    rel=0.02)
+    assert sigma == pytest.approx(true_sigma, rel=0.15)
+    assert sigma < size / 2.0 - 1e-6, "sigma railed on its upper bound"
+```
+
+At size=2592 this spot has FWHM ≈ 1221 px — above `FWHM_MAX_PX`. The test
+asserts the **fit**, deliberately saying nothing about `fit_ok`. See §6.
+
+---
+
+## 3. Master table
 
 | # | Test | File | Why it exists | Status today | Cost |
 |---|---|---|---|---|---|
-| **A1** | `test_fixtures_present_and_sane` | `test_fixtures.py` | Catches a stale/corrupt `.npz` before it produces confusing failures elsewhere | passes | instant |
-| **B1** | `test_estimator_is_not_saturated` | `test_estimator.py` | Direct regression for §1.1 — estimator returns the `size/4` ceiling on every real profile | **RED** | instant |
-| **B2** | `test_estimator_recovers_known_width` | `test_estimator.py` | Synthetic σ∈{3,5,12,40} at noise 60. Asserts *good enough to seed*, not exact | **RED** | instant |
-| **B3** | `test_estimator_survives_degenerate_input` | `test_estimator.py` | flat / zeros / hot pixel / edge peak / two peaks (§4.10) | passes | instant |
-| **C1** | `test_railed_frames_recover_truth` | `test_fit.py` | **The headline.** Frames 11 & 18 must land on μ≈535.267 / 530.611 | **RED** | ~1 s |
-| **C2** | `test_no_parameter_lands_on_a_bound` | `test_fit.py` | §1.5's reliable detector, applied to all golden profiles | **RED** | ~1 s |
+| **A1** | `test_fixtures_present_and_sane` | `test_fixtures.py` | Catches a stale/corrupt `.npz` before it confuses everything downstream | passes | instant |
+| **R1** | `test_estimator_does_not_saturate_at_any_resolution` | `test_resolution.py` | Saturation is size-scaled; 64 px fails differently from 2592 px | **RED** | ~1 s |
+| **R2** | `test_fit_recovers_known_spot_at_any_resolution` | `test_resolution.py` | End-to-end fit, no hardcoded resolution anywhere | **RED** | ~2 s |
+| **R3** | `test_very_broad_spot_is_fit_not_railed` | `test_resolution.py` | A huge-but-real dot must fit, even past `FWHM_MAX_PX` | **RED** | ~1 s |
+| **B1** | `test_estimator_is_not_saturated` | `test_estimator.py` | Same as R1 but on the real golden profiles | **RED** | instant |
+| **B2** | `test_estimator_survives_degenerate_input` | `test_estimator.py` | flat / zeros / hot pixel / edge peak / two peaks, swept over sizes | passes | instant |
+| **C1** | `test_railed_frames_recover_truth` | `test_fit.py` | **The headline.** Frames 11 & 18 → μ≈535.267 / 530.611 | **RED** | ~1 s |
+| **C2** | `test_no_parameter_lands_on_a_bound` | `test_fit.py` | §1.5's reliable detector, on all golden profiles | **RED** | ~1 s |
 | **C3** | `test_ladder_returns_lowest_residual_fit` | `test_fit.py` | **The causal test** — would have caught the original `break` bug | **RED** | ~5 s |
-| **C4** | `test_fitted_peak_matches_profile_peak` | `test_fit.py` | §1.2 as a physical invariant: `amp + offset ≈ profile.max()` | **RED** | ~1 s |
-| **C5** | `test_broad_but_real_spot_is_kept` | `test_fit.py` | Over-correction guard (frosty). σ≈172 must survive | passes | ~1 s |
-| **C6** | `test_fit_is_deterministic` | `test_fit.py` | Same profile twice → identical bits. Guards thread/RNG dependence | passes | instant |
-| **D1** | `test_matches_truth_lm_on_golden_profiles` | `test_truth.py` | **The truth comparison you asked for**, offline. vs unbounded LM `p0σ=5` | **RED** | ~2 s |
-| **D2** | `test_truth_gate_choice_is_irrelevant` | `test_truth.py` | Open item #5: after the fix, 500 vs 1000 shouldn't change any verdict | **DISCUSS** | instant |
-| **D3** | `test_run_level_agreement_with_truth` | `test_truth.py` | §4.11 sweep as a test. `needs_data`, `slow` | **DISCUSS** | ~4 min |
-| **E1** | `test_parallel_imports_identical_fit_symbols` | `test_parallel.py` | Prevents a silent fork of the fit math (handoff §1.7) | passes | instant |
-| **E2** | `test_serial_and_parallel_workers_agree` | `test_parallel.py` | Covers the 4 duplicated profile-derivation sites. `needs_data` | passes | ~5 s |
-| **E3** | `test_worker_failure_returns_empty_row` | `test_parallel.py` | Corrupt/missing file must yield `_empty_row`, not crash the pool | passes | instant |
-| **E4** | `test_frame_order_is_stable_under_ties` | `test_parallel.py` | **New finding — see §5.** Unstable sort + tied `frame_num` | **likely RED** | instant |
-| **F1** | `test_worker_count_does_not_change_output` | `test_pipeline.py` | *The* parallelism-correctness test. Synthetic run, WORKERS 1 vs 4 | **DISCUSS** | ~10 s |
+| **C4** | `test_fitted_peak_matches_profile_peak` | `test_fit.py` | §1.2 as physics: `amp + offset ≈ profile.max()` | **RED** | ~1 s |
+| **C5** | `test_broad_but_real_spot_is_kept` | `test_fit.py` | Over-correction guard on the real frosty frame | passes | ~1 s |
+| **C6** | `test_fit_is_deterministic` | `test_fit.py` | Same profile twice → identical bits | passes | instant |
+| **D1** | `test_matches_truth_lm_on_golden_profiles` | `test_truth.py` | Per-profile truth agreement, offline, vs unbounded LM `p0σ=5` | **RED** | ~2 s |
+| **D2** | `test_summary_agreement_with_truth_does_not_regress` | `test_truth.py` | **The comparison you meant** — summary line vs summary line | **RED** | ~2 s |
+| **E1** | `test_parallel_imports_identical_fit_symbols` | `test_parallel.py` | Prevents a silent fork of the fit math (§1.7) | passes | instant |
+| **E2** | `test_serial_and_parallel_workers_agree` | `test_parallel.py` | The 4 duplicated profile sites. `needs_data` | passes | ~5 s |
+| **E3** | `test_worker_failure_returns_empty_row` | `test_parallel.py` | Corrupt file → `_empty_row`, not a dead pool | passes | instant |
+| **E4** | `test_frame_ordering_is_stable` | `test_parallel.py` | Ties in `frame_num` are reachable in 31 runs — §5 | **RED** | instant |
+| **F1** | `test_worker_count_does_not_change_output` | `test_pipeline.py` | *The* parallelism-correctness test | **DISCUSS** | ~10 s |
 
-RED = expected to fail against today's `fits_reprocess.py`, by design.
+RED = expected to fail against today's `fits_reprocess.py`, by design. 12 of 18.
 
 ---
 
-## 3. Full code — the small ones
+## 4. Full code — the small ones
 
 ### A1 — fixtures sane
+
+No minimum-size assumption (r1 had `size >= 512`; dropped).
 
 ```python
 def test_fixtures_present_and_sane(profiles):
     assert len(profiles) == 12, "expected 6 frames x 2 axes"
     for key, prof in profiles.items():
-        assert prof.ndim == 1 and prof.size >= 512, key
+        assert prof.ndim == 1 and prof.size > 0, key
         assert np.all(np.isfinite(prof)), key
         assert prof.max() > prof.min(), f"{key} is flat"
 ```
 
-### B1 — estimator not saturated
-
-The whole original bug in three lines. Today `_estimate_sigma` returns exactly
-`profile.size / 4` (320 in x, 256 in y) on every real profile.
+### B1 — estimator not saturated, on real profiles
 
 ```python
 @pytest.mark.parametrize("key", ["allmetal_f001_py", "allmetal_f011_py",
                                  "allmetal_f018_py", "allmetal_f101_py"])
 def test_estimator_is_not_saturated(profiles, key):
     prof = profiles[key]
-    x = np.arange(prof.size, dtype=np.float64)
-    est = fr._estimate_sigma(prof, x, float(prof.argmax()))
+    est = fr._estimate_sigma(prof, np.arange(prof.size, dtype=np.float64),
+                             float(prof.argmax()))
     ceiling = prof.size / 4.0
-    assert est < 0.5 * ceiling, f"estimator pinned at its ceiling ({est:.1f} vs {ceiling:.0f})"
+    assert est < 0.5 * ceiling, f"pinned at ceiling ({est:.1f} vs {ceiling:.0f})"
 ```
 
-### B3 — degenerate inputs
+Today: returns exactly 256.0 for every 1024 px y-profile.
+
+### B2 — degenerate inputs, swept over size
 
 ```python
-@pytest.mark.parametrize("name,prof", [
-    ("flat",      np.full(1024, 21000.0)),
-    ("zeros",     np.zeros(1024)),
-    ("hot_pixel", _one_hot(1024, 512, 21000.0, 5e4)),
-    ("edge_peak", _gauss_on(1024, mu=2.0,    sigma=4.0)),
-    ("two_peaks", _gauss_on(1024, mu=300.0,  sigma=4.0)
-                + _gauss_on(1024, mu=700.0,  sigma=4.0)),
-])
-def test_estimator_survives_degenerate_input(name, prof):
-    x = np.arange(prof.size, dtype=np.float64)
-    est = fr._estimate_sigma(prof, x, float(prof.argmax()))
-    assert np.isfinite(est) and est > 0, name
-    assert est <= prof.size, name
+def _degenerate(size):
+    hot = np.full(size, 21000.0); hot[size // 2] = 5e4
+    return {
+        "flat":      np.full(size, 21000.0),
+        "zeros":     np.zeros(size),
+        "hot_pixel": hot,
+        "edge_peak": synth(size, mu_frac=0.002, sigma=4.0, noise=0.0)[0],
+        "two_peaks": synth(size, mu_frac=0.3, sigma=4.0, noise=0.0)[0]
+                   + synth(size, mu_frac=0.7, sigma=4.0, noise=0.0)[0],
+    }
+
+@pytest.mark.parametrize("size", [64, 512, 2592])
+@pytest.mark.parametrize("name", ["flat", "zeros", "hot_pixel", "edge_peak", "two_peaks"])
+def test_estimator_survives_degenerate_input(size, name):
+    prof = _degenerate(size)[name]
+    est = fr._estimate_sigma(prof, np.arange(size, dtype=np.float64),
+                             float(prof.argmax()))
+    assert np.isfinite(est) and 0 < est <= size, f"{name}@{size}: est={est}"
 ```
 
-Deliberately weak assertions. These inputs have no right answer; the test only
-pins down "does not raise, does not return garbage that poisons the ladder."
+Deliberately weak. These inputs have no right answer; the test only pins down
+"doesn't raise, doesn't return something that poisons the ladder."
 
 ### C1 — the headline
 
 ```python
-# (frame key, expected mu_y, expected sigma_y) — from handoff §5.1, cross-checked
-# there against an unbounded LM fit to 4 decimal places.
+# (key, expected mu, expected sigma) — handoff section 5.1, cross-checked there
+# against an unbounded LM fit to 4 decimals.
 RAILED_ANCHORS = [
     ("allmetal_f011_py", 535.2666, 4.4065),
     ("allmetal_f018_py", 530.6110, 5.3530),
@@ -195,11 +287,11 @@ RAILED_ANCHORS = [
 @pytest.mark.parametrize("key,mu_want,sigma_want", RAILED_ANCHORS)
 def test_railed_frames_recover_truth(profiles, key, mu_want, sigma_want):
     amp, mu, sigma, offset = fr._fit_one_profile(profiles[key])
-    assert mu   == pytest.approx(mu_want,    abs=0.05)
+    assert mu    == pytest.approx(mu_want,    abs=0.05)
     assert sigma == pytest.approx(sigma_want, rel=0.02)
 ```
 
-Today this returns μ=0.000, σ=355.26 for frame 11 and μ=410.4, σ=512.0 for frame 18.
+Today: μ=0.000/σ=355.26 for frame 11, μ=410.4/σ=512.0 for frame 18.
 
 ### C2 — nothing on a bound
 
@@ -217,9 +309,8 @@ def test_no_parameter_lands_on_a_bound(profiles):
     assert not failures, "\n".join(failures)
 ```
 
-Collects all failures rather than dying on the first, so one run shows you the
-whole picture. This is the §1.5 detector: bound-hitting is unambiguous, large
-sigma alone is not.
+Collects every failure instead of dying on the first. Bounds derive from
+`prof.size`, so this is resolution-agnostic by construction.
 
 ### C4 — amp is above-offset
 
@@ -232,9 +323,8 @@ def test_fitted_peak_matches_profile_peak(profiles, key):
     assert amp + offset == pytest.approx(prof.max(), rel=0.05)
 ```
 
-§1.2 stated as physics, not as an implementation check: the model's predicted
-peak height must match the data's. Today the *seed* predicts ~2× the data; this
-asserts the *converged* fit doesn't.
+§1.2 stated as physics rather than an implementation check: the converged model's
+peak height must match the data's.
 
 ### C6 — determinism
 
@@ -248,15 +338,14 @@ def test_fit_is_deterministic(profiles):
 
 ```python
 def test_parallel_imports_identical_fit_symbols():
-    import fits_reprocess as fr
-    import fits_reprocess_parallel as frp
+    import fits_reprocess as fr, fits_reprocess_parallel as frp
     assert frp._fill_fit_results is fr._fill_fit_results
-    assert frp._empty_row         is fr._empty_row
-    assert frp._load_fits_frame   is fr._load_fits_frame
-    assert frp._load_image_frame  is fr._load_image_frame
+    assert frp._empty_row        is fr._empty_row
+    assert frp._load_fits_frame  is fr._load_fits_frame
+    assert frp._load_image_frame is fr._load_image_frame
 ```
 
-Verified accurate: `fits_reprocess_parallel.py:97-108` imports all four.
+Verified: `fits_reprocess_parallel.py:97-108` imports all four.
 
 ### E3 — worker failure is contained
 
@@ -268,19 +357,105 @@ def test_worker_failure_returns_empty_row(tmp_path):
     row, img, px, py = frp._fit_worker_fits(str(bogus), need_image=False)
     assert row["fit_ok"] is False
     assert np.isnan(row["mu_x"]) and np.isnan(row["mu_y"])
-    assert row["frame_num"] == 1          # parsed from the name, not the payload
+    assert row["frame_num"] == 1          # from the name, not the payload
     assert (img, px, py) == (None, None, None)
 ```
 
+### E4 — stable frame ordering
+
+You endorsed `kind="stable"`, so this is now a straight code change plus its
+regression test rather than an open question.
+
+```python
+def test_frame_ordering_is_stable():
+    """Rows with equal frame_num keep discovery order through the pipeline sort."""
+    rows = [fr._empty_row(f"f{i:03d}.fits", frame_num=7, timestamp=f"t{i}")
+            for i in range(50)]
+    df = fr._order_frames(pd.DataFrame(rows))
+    assert list(df["filename"]) == [f"f{i:03d}.fits" for i in range(50)]
+```
+
+This needs one three-line helper in `fits_reprocess.py`, replacing the four
+open-coded sorts:
+
+```python
+def _order_frames(df: pd.DataFrame) -> pd.DataFrame:
+    """Order rows by frame number, preserving discovery order among ties.
+    Stable is required: 31 of ~78 runs have duplicate frame_num values."""
+    return df.sort_values("frame_num", kind="stable").reset_index(drop=True)
+```
+
+Applied at `fits_reprocess.py:713,776` and `fits_reprocess_parallel.py:529,632`.
+That's a smaller change than r1's source-regex hack, and gives a real thing to
+test. See §5.
+
 ---
 
-## 4. Snippets — the bigger ones
+## 5. The frame-order sort is unstable
+
+Not in the handoff; found while grounding this plan. `csv_to_dotplots.py:83,85`
+sorts with an explicit `kind="stable"`. The four pipeline sorts do not:
+
+```
+fits_reprocess.py:713           df.sort_values("frame_num")
+fits_reprocess.py:776           df.sort_values("frame_num")
+fits_reprocess_parallel.py:529  df.sort_values("frame_num")
+fits_reprocess_parallel.py:632  df.sort_values("frame_num")
+```
+
+pandas defaults to quicksort, which is not stable, so ties land in arbitrary
+order. Ties are reachable in **31 of ~78 runs**, from two causes:
+
+1. **`frame_num == -1`, 22 runs, always exactly 3 rows.** I checked these: they
+   are the self-ingested plot PNGs (`warming_FFT_reprocess.png` etc.) that commit
+   `ccc3796` added the denylist for. Those CSVs are **stale**, written before the
+   fix. All three carry `fit_ok=False` so they never reach the baseline. Benign,
+   and reprocessing clears them.
+2. **Genuine duplicate `frame_num >= 0`, 2–3 rows in ~9 runs.** Real frames with
+   colliding numbers. These do sort non-deterministically.
+
+Whether cause 2 can move a result depends on the position baseline being taken
+from the first surviving frame (`csv_to_dotplots.py:114`) — a tie at the *front*
+of the ordering is the dangerous case, a tie in the middle is cosmetic. I have
+not checked whether any affected run has its tie at frame 1, so I'd call this
+latent rather than live. The fix costs one keyword either way.
+
+---
+
+## 6. The FWHM gate — dropped as a test target
+
+r1 proposed `test_truth_gate_choice_is_irrelevant`, asserting no correct fit
+lands between FWHM 500 and 1000. **Dropped.** Your reasoning is right and it
+changes the framing: a dot can legitimately be FWHM > 500, and there's no
+principled reason it can't exceed 1000 either. The goal is that `curve_fit` looks
+at the real image and picks an intelligent guess — the gate is not the mechanism,
+so building tests around its exact value encodes an arbitrary constant as if it
+were physics.
+
+What replaces it:
+
+- **R3** asserts a genuinely huge spot is *fit* correctly, and says nothing about
+  `fit_ok`. At size=2592 that spot has FWHM ≈ 1221, past `FWHM_MAX_PX` — the fit
+  must still be right whether or not the gate later keeps the frame.
+- The real rejection criterion should be **`on_bound` plus residual**, not a magic
+  FWHM ceiling (handoff §1.5, open item #3). Recording `on_bound_x/y` and
+  `resid_x/y` in `{run}_frames.csv` makes `FWHM_MAX_PX` mostly vestigial.
+
+This does raise a live question, which the data now makes concrete — see D2
+below: `20260306_springgenie` has **12920 of 14150 frames** that truth's
+`fwhm_max=500` cuts and reprocess keeps. If those are real broad dots, truth is
+the one throwing away good data, and the "divergence" there is truth being wrong.
+I'd want to look at a springgenie frame before touching either constant.
+
+---
+
+## 7. Snippets — the bigger ones
 
 ### C3 — ladder returns the lowest-residual fit
 
-The test that would have caught the original bug. Written
-**implementation-agnostically**: it doesn't care how many rungs there are or what
-they're seeded with, only that no alternative seed beats the answer you returned.
+The test that would have caught the original bug, written
+implementation-agnostically: it doesn't care how many rungs exist or how they're
+seeded, only that no alternative seed beats the returned answer.
 
 ```python
 SEEDS = [2., 5., 10., 25., 50., 100., 200.]
@@ -297,6 +472,8 @@ def test_ladder_returns_lowest_residual_fit(profiles, key):
 
     bounds = ([0., 0., 1., -np.inf], [np.inf, float(prof.size), prof.size / 2., np.inf])
     for s in SEEDS:
+        if s >= prof.size / 2.0:
+            continue                       # seed outside the bound, not a fair rival
         try:
             p, _ = curve_fit(fr.gaussian, x, prof, bounds=bounds, maxfev=5000,
                              p0=[prof.max() - np.median(prof), float(prof.argmax()),
@@ -309,13 +486,13 @@ def test_ladder_returns_lowest_residual_fit(profiles, key):
             f"beating the returned fit's {got:.1f}")
 ```
 
-On frame 11 today: returned RMS is 93.6, seed σ=5 reaches 61.2 → fails loudly,
-which is exactly the §1.3 finding restated as an assertion.
+On frame 11 today the returned fit scores RMS 93.6 while seed σ=5 reaches 61.2 —
+§1.3 restated as an assertion.
 
-### D1 — agreement with the truth notebook, offline
+### D1 — per-profile truth agreement, offline
 
-The truth recipe from `dot_movie-Copy3.ipynb` (handoff §1.6): **unbounded**
-`curve_fit` → Levenberg–Marquardt, `p0` sigma fixed at 5.
+Truth's recipe from `dot_movie-Copy3.ipynb` (§1.6): **unbounded** `curve_fit` →
+Levenberg–Marquardt, `p0` sigma fixed at 5.
 
 ```python
 def _truth_fit(prof):
@@ -335,18 +512,81 @@ def test_matches_truth_lm_on_golden_profiles(profiles, key):
     assert sigma_n == pytest.approx(sigma_t, rel=0.01)
 ```
 
-**Caveat I want to flag rather than paper over:** truth's `p0 σ=5` is itself a
-guess that happens to suit these spots. On `frosty` (true σ≈172) truth seeded at
-5 may converge somewhere different, or not converge at all. If it doesn't, the
-honest move is to exclude `frosty` from D1 and let C5 cover it — *not* to loosen
-the tolerance until it passes. I'll report what it actually does before deciding.
+**Caveat, flagged not papered over:** truth's `p0 σ=5` is itself a guess that
+suits these particular spots. On `frosty` (true σ≈172) truth seeded at 5 may land
+somewhere else or not converge. If so the honest move is to drop `frosty` from D1
+and let C5 and R3 cover it — *not* to loosen the tolerance until it passes. I'll
+report what it actually does.
+
+### D2 — summary-line agreement with truth
+
+**This is the comparison you meant, and you were right that it's instant.** It
+compares `all_runs_summary.csv` (rows written by the notebook) against
+`all_runs_summary_reprocess.csv`, line for line. `compare_pipelines.py` already
+implements it — `TRUTH_PAIRS`, `_reldiff`, `report_truth()`, thresholds
+`REL_TOL=1e-3` / `REL_WARN=2e-2` at lines 60–80. The test is a thin assertion
+over that machinery, not new logic.
+
+Current state, from `compare_pipelines.py --truth` run this session (~2 s):
+
+```
+28 overlapping runs:
+    MATCH                      17     agree to <0.1% on all 8 stats
+    NEAR                        2     <2% but worse than 0.1%
+    DIVERGENT_WITH_FAILURES     6     <- the bug
+    DIVERGENT_TRUTH_GATE        3     <- truth's fwhm_max=500 cuts frames we keep
+```
+
+The six failures are the acceptance criterion for the whole effort:
+
+```
+ 20260130_newsecondary   3999 total   1124 good   worst reldiff 1.636  y position
+     20260213_allmetal   3922 total   3273 good   worst reldiff 0.977  FWHM y std
+   20260219_hotandcold  15806 total  15789 good   worst reldiff 0.712  FWHM y std
+  20260306_springbreak  14174 total  14166 good   worst reldiff 0.652  FWHM y std
+   20260320_statictest   5660 total   5593 good   worst reldiff 0.935  FWHM y std
+20260420_zoeysecondary  10156 total   9350 good   worst reldiff 0.954  FWHM x std
+```
+
+```python
+EXPECTED = {
+    # run_key -> the worst verdict it may hold. Anything worse fails.
+    # The 3 TRUTH_GATE runs are NOT bugs: truth's fwhm_max=500 discards frames we
+    # legitimately keep (springgenie loses 12920 of 14150). See section 6.
+    "20260306_springgenie":     "DIVERGENT_TRUTH_GATE",
+    "20260320_statictestgenie": "DIVERGENT_TRUTH_GATE",
+    "20260814_postspiegenie":   "DIVERGENT_TRUTH_GATE",
+}
+ACCEPTABLE = {"MATCH", "NEAR"}
+
+def test_summary_agreement_with_truth_does_not_regress():
+    import compare_pipelines as cp
+    df = cp.report_truth()
+    bad = []
+    for _, r in df.iterrows():
+        allowed = {EXPECTED.get(r.run_key, None)} | ACCEPTABLE
+        if r.verdict not in allowed:
+            bad.append(f"{r.run_key}: {r.verdict} "
+                       f"(worst {r.worst_reldiff:.3f} on {r.worst_column})")
+    assert not bad, "\n".join(bad)
+```
+
+Two honest caveats:
+
+1. **This stays red until the pipeline is fixed *and* the affected runs are
+   reprocessed.** It's the end-to-end acceptance test, not a unit test — it can't
+   go green from a code change alone. That's the right shape for it, but it means
+   it is red for most of this effort.
+2. `report_truth()` currently prints and writes a diagnostics CSV as a side
+   effect. Calling it from a test is fine but noisy; it may want a `quiet=True`
+   or a split between compute and report. Small change, flag it now.
 
 ### E2 — serial and parallel workers agree on real frames
 
 Covers the four duplicated `astype(np.float64)` → `sum` sites
 (`fits_reprocess_parallel.py:134-136, 158-160, 309-311, 336-338`) plus the two in
-`fits_reprocess.py`. The `np.flip` is already centralised in the loaders, so this
-should pass — it's a guard, not a bug hunt.
+`fits_reprocess.py`. `np.flip` is already centralised in the loaders, so this
+should pass — a guard, not a bug hunt.
 
 ```python
 @pytest.mark.needs_data
@@ -363,126 +603,19 @@ def test_serial_and_parallel_workers_agree():
                 assert a == b, f"{path} {k}: {a!r} != {b!r}"
 ```
 
-### E4 — stable ordering under tied frame numbers
-
-See §5 for why this is here.
-
-```python
-def test_frame_order_is_stable_under_ties():
-    """Rows with equal frame_num must keep discovery order through the sort."""
-    rows = [fr._empty_row(f"f{i}.fits", frame_num=7, timestamp=f"t{i}") for i in range(50)]
-    df = pd.DataFrame(rows).sort_values("frame_num", kind="stable").reset_index(drop=True)
-    assert list(df["filename"]) == [f"f{i}.fits" for i in range(50)]
-```
-
-As written this tests pandas, not us — it becomes a real test once the assertion
-targets the pipeline's own sort. The honest version asserts on the source:
-
-```python
-def test_pipeline_sorts_stably():
-    """All four frame-ordering sorts must pass kind='stable'."""
-    import re, pathlib
-    for f in ("fits_reprocess.py", "fits_reprocess_parallel.py"):
-        src = pathlib.Path(f).read_text()
-        for m in re.finditer(r'\.sort_values\(\s*"frame_num"([^)]*)\)', src):
-            assert 'kind="stable"' in m.group(1), f"{f}: unstable sort at {m.start()}"
-```
-
-A source-text assertion is ugly. **DISCUSS** — the alternative is to route all
-four sites through one `_order_frames(df)` helper and test *that*, which is
-cleaner but is a refactor of working code.
-
 ---
 
-## 5. New finding: the frame-order sort is unstable
-
-Not in the handoff. Found while grounding this plan.
-
-`csv_to_dotplots.py:83,85` sorts with an explicit `kind="stable"`. All four
-sorting sites in the pipeline do **not**:
-
-```
-fits_reprocess.py:713           df.sort_values("frame_num")
-fits_reprocess.py:776           df.sort_values("frame_num")
-fits_reprocess_parallel.py:529  df.sort_values("frame_num")
-fits_reprocess_parallel.py:632  df.sort_values("frame_num")
-```
-
-pandas defaults to quicksort, which is not stable. Ties therefore land in
-arbitrary order. Ties are reachable — **31 of ~78 runs have them**:
-
-```
-runs with duplicate or -1 frame_num: 31
-  fan_restart5237       rows= 6235 unique= 6232 neg=   0
-  fanoff5237            rows= 9132 unique= 9129 neg=   0
-  morning25             rows=11523 unique=11520 neg=   0
-  ...
-  warming               rows=   79 unique=   77 neg=   3
-```
-
-Two distinct causes, and they matter differently:
-
-1. **`frame_num == -1` (22 runs, always exactly 3 rows).** I checked these: they
-   are the self-ingested plot PNGs (`warming_FFT_reprocess.png` etc.) that commit
-   `ccc3796` added the denylist for. These CSVs are **stale**, written before that
-   fix. All three carry `fit_ok=False`, so they never reach the baseline. Benign,
-   and reprocessing clears them.
-
-2. **Genuine duplicate `frame_num >= 0` (2–3 rows per run, ~9 runs).** These are
-   real frames with colliding numbers, and they *do* sort non-deterministically.
-
-Whether cause 2 can actually move a result depends on `csv_to_dotplots.py:114`
-baselining positions on the first surviving frame — per the standing note, one
-changed first-frame shifts every position by a constant. A tie at the *front* of
-the ordering is the dangerous case; a tie in the middle is cosmetic. I have not
-yet checked whether any of the ~9 affected runs has its tie at frame 1, and I'd
-want to before calling this a live bug rather than a latent one.
-
-**Cheap fix regardless:** add `kind="stable"` at all four sites. One word each,
-no behaviour change when there are no ties.
-
----
-
-## 6. Tests I want to talk about first
-
-### D2 — is the FWHM gate supposed to be irrelevant?
-
-```python
-def test_truth_gate_choice_is_irrelevant(profiles):
-    """After the fix, no golden frame should sit between the 500 and 1000 gates."""
-    for key, prof in profiles.items():
-        _, _, sigma, _ = fr._fit_one_profile(prof)
-        fwhm = sigma * fr.FWHM_FACTOR
-        assert not (500 <= fwhm < 1000), f"{key}: fwhm={fwhm:.1f} is gate-sensitive"
-```
-
-This encodes a *design intent* (open item #5), not a known bug. It's only a fair
-test if you agree the intent is "a correct fit never lands in that band." If you'd
-rather keep 1000 as a deliberate safety margin for genuinely broad spots, this
-test is wrong and I should drop it in favour of just recording `on_bound` in the
-CSV. **Which is it?**
-
-### D3 — the slow run-level sweep
-
-§4.11 as a test: sample every 25th frame of allmetal, fit old/new/truth, assert
-zero railed and max |Δμ| < 1 px. Recorded cost was ~4 min for 20 frames × 2 axes,
-dominated by FITS reads.
-
-Questions: is a 4-minute `--slow` test worth having, or is a one-off script you
-run before reprocessing better? And how many frames — 20 is thin, 393 was
-abandoned at >40 min (§4.12). I lean toward **not** making this a test: it's a
-pre-flight check, and `compare_pipelines.py` already does the run-level
-comparison properly once the data is reprocessed.
+## 8. Still to discuss — F1 only
 
 ### F1 — worker-count invariance
 
-The single best "the parallelisation is correct" test, and the one with real
-plumbing cost. Shape:
+The single best "the parallelisation is correct" test, and the only one left with
+real plumbing cost.
 
 ```python
 @pytest.mark.parametrize("workers", [1, 4])
 def test_worker_count_does_not_change_output(tmp_path, monkeypatch, workers):
-    run_dir = _synthesize_fits_run(tmp_path, n=8)     # 8 tiny Gaussian frames
+    run_dir = _synthesize_fits_run(tmp_path, n=8, size=128)   # tiny Gaussian frames
     monkeypatch.setattr(frp, "WORKERS", workers)
     monkeypatch.setattr(fr, "OUTPUT_DIR", tmp_path / "out")
     frp.process_fits_run(run_dir, make_plots=False, make_movie=False)
@@ -491,44 +624,59 @@ def test_worker_count_does_not_change_output(tmp_path, monkeypatch, workers):
 
 Three things to settle:
 
-1. `OUTPUT_DIR` is a module-level constant in `fits_reprocess`, and
+1. `OUTPUT_DIR` is a module constant in `fits_reprocess`, and
    `fits_reprocess_parallel.py:449` calls `OUTPUT_DIR.mkdir()` directly.
-   Monkeypatching it works but is fragile. Cleaner would be an optional
-   `output_dir=` parameter on `process_fits_run` — a small signature change to
-   working code. **Do you want that change, or is monkeypatching fine?**
-2. Synthetic frames need to be small (say 128×128) to keep this fast, but the
-   shmem-vs-stream pipeline choice keys off image size and available RAM
-   (`_choose_pipeline`, line 362). A tiny run will always pick one path. To cover
-   both I'd need to force the mode — `process_fits_run` may already take a `mode`
-   argument; I'd check before writing.
-3. Same question one level up: is the *shmem* path worth a separate test? It needs
-   `_SHMEM_ARR` initialised via the pool initialiser, so it can't be called
-   directly the way E2 calls `_fit_worker_fits`. Testing it means going through
-   `_shmem_run`, which is most of an integration test.
+   Monkeypatching works but is fragile. Cleaner: an optional `output_dir=`
+   parameter on `process_fits_run`. **Signature change to working code — want it?**
+2. Synthetic frames must be small to stay fast, but `_choose_pipeline`
+   (line 362) selects shmem vs stream by image size and free RAM, so a tiny run
+   always takes one path. Covering both means forcing the mode.
+3. Is the *shmem* path worth its own test? It needs `_SHMEM_ARR` set up by the
+   pool initialiser, so it can't be called directly the way E2 calls
+   `_fit_worker_fits`. Testing it means going through `_shmem_run` — most of an
+   integration test.
+
+My lean: do F1 with whichever pipeline the tiny run naturally picks, skip forcing
+both modes, and skip a separate shmem test. E1 already guarantees both paths call
+the same fit function, which is where the risk actually is.
 
 ---
 
-## 7. Deliberately not tested
+## 9. Changes from revision 1
 
-- **The over-built estimator (§5.2).** You rejected it; I'm not resurrecting it.
-  Its test cells (§4.9, §4.10) survive as B2 and B3, which is the useful part.
-- **Plot and movie output.** Image comparison is brittle and these aren't where
-  the bug lives.
-- **`_count_peaks`.** Informational only; it doesn't gate `fit_ok`
-  (`fits_reprocess.py:210`).
-- **Timing / speedup.** The 3.2× from §4.11 is a nice result, not an invariant
-  worth failing a build over.
+| r1 | r2 | Why |
+|---|---|---|
+| `assert prof.size >= 512` in A1 | `prof.size > 0` | Hardcoded a resolution assumption |
+| synthetic tests at 1024 only | new group R, sizes 64→2592 | The bug is size-scaled; 64 px fails differently |
+| — | R3, huge-spot test | A dot may legitimately exceed FWHM 500 or 1000 |
+| D2 `test_truth_gate_choice_is_irrelevant` | **deleted** | Encoded an arbitrary constant as physics; the gate isn't the mechanism |
+| D3, 4-min per-frame refit sweep | D2, instant summary-line compare | I described §4.11's sweep; you meant summary vs summary. `compare_pipelines.py` already does it in ~2 s |
+| E4 as a source-text regex hack | `_order_frames()` helper + real test | You endorsed `kind="stable"`; a helper is cleaner than four open-coded sorts |
+| `@pytest.mark.slow` tier | removed | Nothing left is slow |
 
 ---
 
-## 8. Order I'd build in
+## 10. Deliberately not tested
+
+- **The over-built estimator (§5.2).** Rejected; not resurrecting it. Its useful
+  parts survive as R1 and B2.
+- **Plot and movie output.** Image comparison is brittle and the bug isn't there.
+- **`_count_peaks`.** Informational; doesn't gate `fit_ok` (`fits_reprocess.py:210`).
+- **Timing / speedup.** The 3.2× from §4.11 is a result, not an invariant worth
+  failing a build over.
+
+---
+
+## 11. Build order
 
 1. `make_fixtures.py`, run it, commit the `.npz` — **while `E:` is still mounted**
-2. `conftest.py` + A1
-3. Group B, C, E1, E3 — the offline core, written red
+2. `conftest.py`, `synth.py`, A1
+3. Groups R, B, C, E1, E3 — the offline core, written red
 4. **Show you the red run.** No pipeline changes yet
-5. D1 — reporting honestly what `frosty` does under truth's `p0 σ=5`
-6. Decide D2 / D3 / E4 / F1 from §6
-7. Only then: apply the §5.1 fix, watch the suite go green
+5. D1, reporting honestly what `frosty` does under truth's `p0 σ=5`
+6. `_order_frames()` + E4 — the one code change that isn't the fit itself
+7. Decide F1 from §8
+8. Apply the §5.1 fit rewrite; suite goes green except D2
+9. Reprocess the affected runs; D2 goes green
 
 Steps 1–5 touch nothing in the pipeline.
