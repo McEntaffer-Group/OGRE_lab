@@ -172,13 +172,23 @@ there isn't, the extractor walks `E:` with the documented layout from the module
 docstring (lines 5–6). Minor, but I don't want to write `fr.discover_runs` in the
 plan as if I'd verified it — I haven't.
 
-### The original six stay
+### Named anchors, in a third `anchors.npz`
 
-Frames 11/18 of allmetal and frosty frame 1 remain as named anchors in a third
-`anchors.npz`, because they have *known expected values* (μ_y = 535.2666 /
-530.6110, σ_y = 4.4065 / 5.3530) cross-checked against an unbounded LM fit. The
-survey set has no known-good answers — it can only assert invariants. Both are
-needed and they do different jobs.
+The survey set can only assert invariants — it has no known-good answers. These
+frames do, so they stay separate and get asserted against exact values:
+
+| anchor | role | known value |
+|---|---|---|
+| `allmetal` f011, f018 | railing anchors | μ_y = 535.2666 / 530.6110, σ_y = 4.4065 / 5.3530 |
+| `allmetal` f001, f101, f501 | healthy | fit centroid = 2D dot to **1.3 px** — the single-dot control for G4 |
+| `postwinterbreak` f001, f501, f5001 | **two-dot positive** | 2D dot (1439, 626); fit lands at (1403, 998), 375 px away |
+| `frosty` f001 | **two-dot**, was mislabelled | 2D dot (1191, 572), HWHM 3 px; fit at (1384, 1042), 508 px away |
+| `genieshots` mid-run | **saturated**, third category | peak = 255, radial profile flat past 36 px |
+
+Three `postwinterbreak` frames rather than one because the dot drifts 288 px in x
+across the run — a single frame would let a detector pass by accident on a lucky
+position. `allmetal`'s healthy frames double as G4's negative control, which is
+what makes the separation threshold defensible rather than guessed.
 
 ---
 
@@ -341,26 +351,141 @@ A broad plateau's noise crosses the 50%-of-range threshold repeatedly, and 50 px
 spacing is small next to a 390 px component. So the existing column is not a
 usable two-dot flag, and a test built on it would be built on sand.
 
-### Proposed detector: residual structure
+### CONFIRMED on real data — `20260105/postwinterbreak`
+
+You named it, and it settles the question. Frame 1, 2D blob analysis:
+
+```
+thr=60% of peak -> 1 blob    area=    43 px  equiv-diam=  7.4  peak=123  at (x=1439, y= 625)
+thr=20% of peak -> 2 sources area=136205 px  equiv-diam=416.4  peak= 71  at (x=1399, y= 997)
+```
+
+Two sources, 372 px apart in y. The small one is **brighter per pixel** (123 vs
+71) and ~3000× smaller in area. The fit lands on the big one every time:
+
+```
+frame     fit centroid            2D small dot        separation
+    1     x=1402.9 y= 997.9       x=1439 y= 626       375 px
+  501     x=1405.3 y= 989.1       x=1418 y= 578       412 px
+ 5001     x=1418.0 y= 933.0       x=1234 y= 627       357 px
+ 9001     x=1425.7 y= 891.4       x=1151 y= 545       424 px
+```
+
+σ≈165 throughout, i.e. the reported FWHM ~386 is the *blob*. **The run's reported
+position is not the dot's position.** Reported y drifts 998→891 (−107 px) while
+the real dot's y drifts 626→545 (−81 px) — correlated but not equal, so the
+published drift for this run is a blend of two sources.
+
+### My proposed detector was wrong — corrected
+
+The r3 detector (residual bump, global MAD, `n_sigma=5`) **fails on this run**:
+3.8σ at frame 1 and 0.6–0.7σ at frames 501/5001. Two reasons:
+
+1. The broad blob is **not Gaussian**, so single-Gaussian model mismatch leaves
+   structured residuals with MAD ≈ 250 counts — far above the dot's ~600-count
+   bump. Global MAD is the wrong noise scale.
+2. I searched a **fixed** window around frame 1's dot position. This run measures
+   *drift*; the dot moves 288 px in x and 82 px in y over the run. My "misses"
+   were my error, not the detector's.
+
+**What works: high-pass the residual, then take its global argmax.** Subtracting a
+41 px boxcar of the residual from itself suppresses the broad model mismatch and
+keeps the narrow dot:
+
+```
+frame  | 2D small dot (argmax) | 1D high-pass argmax | fit centroid
+     1 | x=1439 y= 626         | x=1439 y= 627       | x=1402.9 y= 997.9
+   501 | x=1418 y= 578         | x=1419 y= 578       | x=1405.3 y= 989.1
+  2001 | x=1402 y= 564         | x=1403 y= 565       | x=1406.6 y= 993.0
+  5001 | x=1234 y= 627         | x=1235 y= 627       | x=1418.0 y= 933.0
+  9001 | x=1151 y= 545         | x=1152 y= 544       | x=1425.7 y= 891.4
+ 11001 | x=1370 y= 595         | x=1369 y= 595       | x=1407.8 y= 929.1
+```
+
+**The 1D high-pass recovers the 2D dot position to ±1 px in every frame**, across
+the whole run. That's better than I expected and it matters: the detector needs
+no access to the 2D image, so `_fill_fit_results(out, px, py)` keeps its signature.
+
+### The discriminator: centroid vs high-pass separation
+
+Significance alone doesn't separate cleanly (frosty 5.5σ vs allmetal 4.3σ). The
+**separation between the fitted centroid and the high-pass peak** does, and
+`allmetal` — a known clean single-dot run — is the control that proves it:
+
+| run | fit centroid | 2D brightest compact source | separation | σ | verdict |
+|---|---|---|---|---|---|
+| `allmetal` | (662.7, 610.8) | (664, 611), HWHM 6 px | **1.3 px** | 5.6 | single dot ✓ |
+| `postwinterbreak` | (1398.7, 948.9) | (1439, 626), HWHM ~4 px | **375 px** | 159 | **two dots** |
+| `frosty` | (1383.6, 1041.5) | (1191, 572), HWHM 3 px | **508 px** | 167 | **two dots** |
+| `genieshots` | (1180.8, 1037.7) | (1074, 727), HWHM >36 px, **peak=255** | 365 px | 212 | saturated, different |
+
+For a single-dot run the fit centroid *is* the dot, to 1.3 px. That's the
+invariant worth testing, and it's resolution- and brightness-independent.
+
+### Two corrections this forces
+
+**1. `frosty` is a two-dot run, and my C5 anchor was invalid.** Its 2D brightest
+source is compact — HWHM 3 px, radial mean falling 94→45→11→3 counts over 9 px —
+sitting 508 px from where the fit puts it. So handoff §1.5's classification of
+`frosty`, `postwinterbreak`, `realwinterbreak` and `newprimary` as "genuinely
+broad spots — those are real, not failures" is **wrong for at least the two I
+checked in 2D**. Those σ≈165 fits are not broad dots; they are a fit locked onto a
+diffuse companion while a compact dot sits elsewhere in the frame.
+
+C5 (`test_broad_but_real_spot_is_kept`) therefore loses its anchor. Over-correction
+is still worth guarding, but R3's *synthetic* broad spot does it without depending
+on a run whose nature I'd have to keep re-verifying. **C5 is dropped; R3 covers it,
+and `frosty` is re-tagged as a two-dot fixture.**
+
+**2. `genieshots` is a third category, not a two-dot run.** Its brightest pixel is
+255 — saturated — and its radial profile stays flat out past 36 px. Its 46.9σ
+high-pass signal comes from saturation structure, not a compact companion. Any
+taxonomy needs `saturated` separate from `two_component`.
+
+### The detector, as corrected
 
 A single Gaussian fit to the laser leaves the narrow dot as a **compact,
 localized, significant positive residual** — a few px wide, many σ above the
 residual noise. That is cheap to detect and doesn't require fitting two Gaussians.
 
 ```python
-def second_component(prof, popt, min_width=2, max_width=40, n_sigma=5.0):
-    """Return (index, width, significance) of a compact positive residual bump,
-    or None. A narrow dot riding on a broad laser shows up here even though it
-    carries ~1e-4 of the fit's leverage."""
+BOXCAR = 41          # px; wide vs a ~5px dot, narrow vs a ~390px blob
+
+def compact_peak(prof, popt):
+    """Locate the narrowest strong feature the Gaussian fit did not explain.
+
+    High-passing the residual (subtract a 41px boxcar of itself) suppresses the
+    broad model mismatch that swamps a plain-residual test -- on postwinterbreak
+    that mismatch has MAD ~250 counts against a ~600-count dot. Validated against
+    2D: reproduces the true dot position to +/-1 px on every frame checked.
+    Returns (index, significance)."""
     x = np.arange(prof.size, dtype=np.float64)
     resid = prof - fr.gaussian(x, *popt)
-    rms = 1.4826 * np.median(np.abs(resid - np.median(resid)))   # MAD, outlier-safe
-    above = resid > n_sigma * rms
-    ...longest contiguous run within [min_width, max_width]...
+    hp = resid - uniform_filter1d(resid, BOXCAR)
+    mad = 1.4826 * np.median(np.abs(hp - np.median(hp)))
+    i = int(hp.argmax())
+    return i, float(hp[i] / mad) if mad > 0 else np.inf
+
+def second_component(px, py, popt_x, popt_y, min_sigma=5.0, min_sep_frac=1.0):
+    """True when the fit sits far from the frame's strongest compact source.
+
+    Separation, not significance, is the discriminator: allmetal (single dot)
+    gives 4.3 sigma but only 1.3 px of separation, while frosty gives 5.5 sigma
+    and 508 px. Threshold is in units of the fitted sigma, so it is
+    resolution-independent."""
+    ix, sx = compact_peak(px, popt_x)
+    iy, sy = compact_peak(py, popt_y)
+    if max(sx, sy) < min_sigma:
+        return None
+    sep = np.hypot(popt_x[1] - ix, popt_y[1] - iy)
+    scale = max(popt_x[2], popt_y[2])
+    return (ix, iy, sep, max(sx, sy)) if sep > min_sep_frac * scale else None
 ```
 
 MAD rather than plain RMS specifically so the bump doesn't inflate the noise
-estimate it's being measured against.
+estimate it's being measured against. Both thresholds are now **calibrated
+against real data** — `postwinterbreak` as the positive case, `allmetal` as the
+negative — rather than guessed.
 
 ### G4 — two-component frames are flagged, not silently fit
 
@@ -386,19 +511,19 @@ def test_two_component_frames_are_flagged(healthy, run_key):
 Same discipline as `KNOWN_UNUSUAL`: the survey tells us which runs they are, then
 each entry is a recorded finding rather than a suppression.
 
-### What I could not verify
+### Still unverified
 
-I looked at `lasersimultaneous` and `bridgetstatic` and did **not** cleanly
-isolate a two-dot frame in either. `lasersimultaneous` frame 1 shows a single
-broad component (σ≈171) plus noise; a 2D blob search found 227 blobs at 50% of
-peak, i.e. speckle, not two dots. `bridgetstatic` frame 1 has one compact ~10 px
-blob at (1698, 854) and fits to `fwhm_x=273, fwhm_y=24` — badly asymmetric, and
-that run rails `mu_x` on the bound in 45.7% of frames (§1.5), so it has a
-different problem.
+Calibrated on `postwinterbreak` (positive) and `allmetal` (negative), and checked
+in 2D on `frosty` and `genieshots`. **Not** verified in 2D: `realwinterbreak`
+(26.3σ high-pass, 333 px separation) and `lowhumidity` (6.6σ, 1421 px) look like
+two-dot runs on the 1D signature alone, and `newprimary` is on handoff §1.5's
+"broad but real" list but I haven't touched it. G4 across the full fixture set is
+what settles these — that's the survey doing its job rather than me guessing.
 
-**Please point me at a run and frame you know has both dots.** The detector above
-is designed from the physics, not from a measured example, and I'd rather tune
-`n_sigma` and the width window against a real one than ship a threshold I guessed.
+`lasersimultaneous` and `bridgetstatic`, checked earlier, are *not* clean two-dot
+examples: the first shows one broad component plus speckle (227 blobs at 50% of
+peak), the second has one compact ~10 px blob and rails `mu_x` on the bound in
+45.7% of frames, which is the ordinary railing bug.
 
 ### Not proposed: actually fitting two Gaussians
 
@@ -548,7 +673,7 @@ occupying a fifth of the frame — at 2592 px that's FWHM ≈ 1221, past
 | **G1** | `test_healthy_frame_does_not_rail` | **Survey.** Every run's typical frame, parametrized by run | **RED (many)** | ~30 s |
 | **G2** | `test_failure_frame_has_a_known_cause` | Every failure classifiable; real ones allowed, unexamined ones not | **RED (some)** | ~20 s |
 | **G3** | `test_failure_census_does_not_regress` | The whole picture as one number | **RED** | ~5 s |
-| **G4** | `test_two_component_frames_are_flagged` | Laser + real dot. A *silent wrong answer* no other test catches — §4 | **RED (unknown n)** | ~20 s |
+| **G4** | `test_two_component_frames_are_flagged` | Laser + real dot. A *silent wrong answer* no other test catches. Calibrated on postwinterbreak vs allmetal — §4 | **RED (≥2 runs)** | ~20 s |
 | **H1** | `test_run_key_distinguishes_same_name_on_different_dates` | Collision, unit level | passes | instant |
 | **H2** | `test_mirrored_artifacts_do_not_clobber` | Collision, filesystem level | passes | instant |
 | **H3** | `test_no_two_runs_claim_the_same_mirrored_name` | Catches a *future* collision. `needs_data` | passes | ~5 s |
@@ -562,7 +687,7 @@ occupying a fifth of the frame — at 2592 px that's FWHM ≈ 1221, past
 | **C2** | `test_no_parameter_lands_on_a_bound` | §1.5's detector on the anchors | **RED** | ~1 s |
 | **C3** | `test_ladder_returns_lowest_residual_fit` | **Causal test** — would have caught the `break` bug | **RED** | ~5 s |
 | **C4** | `test_fitted_peak_matches_profile_peak` | §1.2 as physics: `amp + offset ≈ max` | **RED** | ~1 s |
-| **C5** | `test_broad_but_real_spot_is_kept` | Over-correction guard (frosty) | passes | ~1 s |
+| ~~C5~~ | ~~`test_broad_but_real_spot_is_kept`~~ | **Dropped** — frosty turned out to be two-dot, so the anchor was invalid. R3 covers over-correction synthetically. See §4 | — | — |
 | **C6** | `test_fit_is_deterministic` | Same profile twice → identical bits | passes | instant |
 | **D1** | `test_matches_truth_lm_on_golden_profiles` | Per-profile truth agreement, offline | **RED** | ~2 s |
 | **D2** | `test_summary_agreement_with_truth_does_not_regress` | Summary line vs summary line | **RED** | ~2 s |
@@ -606,8 +731,11 @@ E4 tests it directly with 50 rows sharing a frame number.
 asserts μ to 0.01 px, σ to 1%.
 
 Caveat I'll report rather than paper over: truth's `p0 σ=5` is a guess that suits
-these spots. On `frosty` (σ≈172) it may land elsewhere or not converge. If so,
-`frosty` comes out of D1 and C5/R3 cover it — *not* a loosened tolerance.
+these spots. `frosty` and `postwinterbreak` are now known to be two-dot frames, so
+truth and reprocess may agree with each other while **both sit on the wrong
+component**. D1 asserts agreement with truth, not correctness — those are different
+claims, and on a two-dot run only the first is available. Where they disagree, R3
+and G4 carry the meaning.
 
 **D2** is the summary-line comparison you meant, and you were right that it's
 instant. `compare_pipelines.py` already implements it (`TRUTH_PAIRS`, `_reldiff`,
@@ -705,7 +833,10 @@ regression gate.
 
 | r3 | r4 | Why |
 |---|---|---|
-| — | §4, two-dot runs + G4 | Laser (~500 FWHM) + real dot (~5 FWHM). ~10⁴× leverage gap, so the big dot wins |
+| — | §4 **verified on postwinterbreak** | Two sources 372 px apart; fit lands on the blob every frame. Confirmed in 2D |
+| r3 detector: residual bump, fixed window, 5σ | high-pass + global argmax | r3 version scored 0.6σ on real data. High-pass tracks the dot to ±1 px |
+| significance as discriminator | centroid-vs-peak **separation** | allmetal 4.3σ/1.3px vs frosty 5.5σ/508px — significance alone does not separate |
+| C5 anchored on frosty | **C5 dropped** | frosty is two-dot; handoff §1.5 mislabelled it "broad but real" |
 | failures taxonomy would cover it | `two_component` deliberately **not** a failure label | It converges cleanly; it's a G1 silent-wrong-answer, not a G2 failure |
 | — | verified `n_peaks` is unusable | Reports >1 on 100% of frames in 22 runs — noise ripple, not dots |
 
@@ -731,7 +862,7 @@ Earlier, r2 → r3:
      then it runs with the physics-derived defaults and I report what it finds
      rather than claiming the numbers are calibrated
 5. **Show you the red run + the survey list.** No pipeline changes yet
-6. D1, reporting honestly what `frosty` does under truth's `p0 σ=5`
+6. D1, reporting honestly what the two-dot anchors do under truth's `p0 σ=5`
 7. `_order_frames()` + E4
 8. Decide F1
 9. Apply the §5.1 fit rewrite; suite goes green except D2/H4
