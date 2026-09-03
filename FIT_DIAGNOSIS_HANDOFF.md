@@ -1,5 +1,26 @@
 # Centroid-railing diagnosis — handoff notes (2026-09-02)
 
+> **STALE IN PARTS — read `NEXT_SESSION.md` first.**
+>
+> Superseded 2026-09-03. What changed:
+>
+> * **The bug is FIXED.** Section 6 item 1 ("Nothing is fixed yet") and the
+>   table in section 3 ("`fits_reprocess.py` **unchanged**") are both false now.
+>   The fix landed in `fits_reprocess.py` on branch `claude/build-test-suite`.
+> * **Section 6 item 4 is done.** The test suite exists in `tests/` — 304 tests.
+> * **Section 1.5's table is contaminated.** It globbed
+>   `reprocess_output/*_frames.csv`, where 20 runs collapse into 8 bare-named
+>   files. Its `minutely`, `overnight` and `warming` rows each describe one
+>   arbitrary run of several, and 12 colliding runs were never scanned. "21 of
+>   ~78 runs affected" is a floor, not a count. See `TEST_PLAN.md` section 1.
+> * **Section 1.5's "broad but real" claim is wrong for at least two runs.**
+>   `frosty` and `postwinterbreak` do not have genuinely broad spots — they are
+>   two-dot frames where the fit locks onto a diffuse companion while a compact
+>   dot sits elsewhere. Verified in 2D. `realwinterbreak` and `newprimary` are
+>   unchecked. See `TEST_PLAN.md` section 4.
+>
+> Sections 1.1-1.4, 1.6 and 1.7 held up and were the basis for the fix.
+
 Investigation into the ±400 px centroid spikes in `allmetal_position_reprocess.png`.
 Root cause found and verified against real data. Two candidate rewrites exist but
 **nothing has been changed in `fits_reprocess.py` yet.**
