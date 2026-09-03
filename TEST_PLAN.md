@@ -1,10 +1,12 @@
 # Test plan — fit correctness, parallel equivalence, truth agreement
 
-Companion to `FIT_DIAGNOSIS_HANDOFF.md`. Nothing here is written yet; this is the
-proposal. Tests marked **DISCUSS** need a decision before I build them.
+Companion to `FIT_DIAGNOSIS_HANDOFF.md`.
 
-Revision 4. Changes from r3 are listed in §13. **§1 corrects a contaminated table
-in the handoff** — read that first if you read nothing else.
+**BUILT.** The suite exists on branch `claude/build-test-suite` and the fit fix is
+applied. See **§15 for results** — read that first. Sections 0-14 are the plan as
+proposed; where the build diverged from it, §15 says so.
+
+§1 corrects a contaminated table in the handoff.
 
 ---
 
@@ -869,3 +871,130 @@ Earlier, r2 → r3:
 10. Reprocess + clean stale bare mirrors; D2 and H4 go green
 
 Steps 1–6 touch nothing in the pipeline.
+
+---
+
+## 15. RESULTS — what was actually built and what it found
+
+Built on branch `claude/build-test-suite`. E: was read-only throughout: the
+fixture extractor opens frames and per-run CSVs for reading and writes only into
+`tests/fixtures/`.
+
+### Suite status
+
+```
+299 passed, 2 failed, 2 skipped, 3 xfailed   in 46s
+```
+
+The two failures are the acceptance tests that **cannot** pass without
+reprocessing, which is the correct shape for them:
+
+- `test_no_ambiguous_bare_named_mirrors` — the 8 stale bare-named CSVs
+- `test_summary_agreement_with_truth_does_not_regress` — the 6 divergent runs
+
+### Red baseline, before the fix
+
+`21 failed, 61 passed`. The failures were exactly the diagnosed bugs:
+
+```
+test_railed_frames_recover_truth[allmetal_f011_py]
+    got mu=1.4e-05 (on the lower bound), expected 535.2666
+test_ladder_returns_lowest_residual_fit[allmetal_f011_py]
+    "starting sigma=2.0 reaches RMS 61.2, beating the returned fit's 93.6"
+test_estimator_does_not_saturate_at_any_resolution
+    est=7.41 at 64px, 19.51 at 128px, then pinned at the ceiling from 512px up
+```
+
+That last line is the resolution-scaling the plan predicted: the estimator
+degrades smoothly with frame size rather than failing uniformly.
+
+### The fix
+
+`_estimate_sigma` now measures the contiguous run above half maximum, local to
+the peak, so rectified background noise cannot contribute. `_fit_one_profile`
+seeds amp as height *above* offset and scores all three seeds by RMS residual,
+keeping the best rather than the first that does not raise.
+
+Side effect worth noting: **the suite got 4x faster** (169s to 42s on the fit
+files). The old first rung burned its full `maxfev=5000` before raising on ~88%
+of profiles.
+
+### Fixtures
+
+594 KB, not the ~3 MB estimated — npz compresses these profiles well.
+
+```
+anchors.npz    70 KB   10 frames with independently known answers
+healthy.npz   439 KB   one fit_ok frame from all 94 runs
+failing.npz    85 KB   one failing frame from the 13 runs that have one
+index.csv       5 KB   per-run counts at extraction time
+```
+
+Coverage is 94/94 runs. Note the plan said 50 runs have failures; that came from
+`all_runs_summary_reprocess.csv`, whose "good frames" is post-FWHM-gate. Only 13
+runs have `fit_ok=False` rows in their per-run CSVs.
+
+### What the survey found
+
+**Failure census across all failing fixtures, after the fix:**
+
+```
+now_fits         23      the fix repaired them; the stored fit_ok=False is stale
+dot_off_frame     3      zoeysecondary (both axes), bridgetstatic (y)
+railed_sigma      0
+railed_mu         0
+unclassified      0
+```
+
+23 of 26 previously-failing frames now fit cleanly with interior parameters and
+real contrast. That is the fix working, measured rather than asserted.
+
+**Three runs still rail** and are recorded in `KNOWN_UNUSUAL` with reasons:
+
+```
+20251014_minutelyovernight   sigma pinned at lower bound 1.0, both axes
+20251029_longweekend         sigma pinned at lower bound 1.0, one axis
+20251106_laser               sigma pinned at upper bound (240 = size/2 of 480px)
+```
+
+These are a *different* signature from the bug just fixed — sigma at the
+**lower** bound, meaning the fit collapsed onto something narrower than a pixel.
+Not examined in 2D.
+
+**21 runs carry a second component.** Two verified in 2D
+(`postwinterbreak`, `frosty`); the rest are detector-flagged only and want eyes
+on them. Seven are `laser*` runs, which is the expected population.
+
+### The detector needed two corrections against real data
+
+Both were found by running it, not by reasoning:
+
+1. **Boxcar edge artifacts.** `uniform_filter1d` has no valid output within one
+   filter width of the boundary, and that produced spurious peaks at index 30-36
+   on several runs. Now excluded by a margin.
+2. **A 1-sigma separation threshold is far too tight for a narrow dot.** A
+   sigma~5 dot with a slightly non-Gaussian core leaves residual structure a few
+   px off centre; that read as a companion on dozens of runs at separations of
+   6-30 px. But loosening to 3 sigma would have rejected postwinterbreak, whose
+   real dot sits only 2.4 sigma from the blob. Two floors are needed — a
+   multiple of sigma AND a fraction of the frame.
+
+Flags dropped from 60 to 21 after those fixes, with all four 2D-verified cases
+still classified correctly.
+
+### Known limitation
+
+The survey samples **one frame per run**, and detection is frame-dependent:
+postwinterbreak's median frame has the two sources only 105 px apart and is not
+flagged, while frames 1, 501 and 5001 sit 357-411 px apart and are. So G4
+undercounts. The three postwinterbreak anchor frames exist precisely to catch
+this, but a per-run flag would need a sweep over many frames.
+
+### Still not done
+
+- **F1 worker-count invariance** — not built. Still needs the `output_dir=`
+  decision from §11.
+- **Reprocessing** — not run. Both remaining test failures need it.
+- **Instrumentation columns** (`nx`/`ny`, `resid`, `on_bound`) — not added. The
+  detectors live in `tests/detect.py`; if any earns its way into production it
+  should move into `fits_reprocess.py` and be recorded in the CSV.

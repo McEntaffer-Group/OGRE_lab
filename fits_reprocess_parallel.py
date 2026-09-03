@@ -97,7 +97,7 @@ from fits_reprocess import (
     _fill_fit_results, _empty_row,
     _extract_timestamp, _extract_frame_num,
     _extract_timestamp_image, _extract_frame_num_image,
-    _detect_camera, _write_frames_csv, _mirror_for_run,
+    _detect_camera, _write_frames_csv, _mirror_for_run, _order_frames,
     list_run_images, run_key, output_dir_for,
     _discover_fits_runs, _discover_image_runs,
     _collect_summaries, _collect_reprocess_summaries,
@@ -525,8 +525,7 @@ def _shmem_run(
         except Exception as exc:
             print(f"    !! could not remove shmem temp file {tmp_path}: {exc}")
 
-    df = (pd.DataFrame([r for r in results if r is not None])
-            .sort_values("frame_num").reset_index(drop=True))
+    df = _order_frames(pd.DataFrame([r for r in results if r is not None]))
     _write_frames_csv(df, out_csv)
     _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())
@@ -628,8 +627,7 @@ def _stream_run(
         if movie is not None:
             movie.close()
 
-    df = (pd.DataFrame([r for r in results if r is not None])
-            .sort_values("frame_num").reset_index(drop=True))
+    df = _order_frames(pd.DataFrame([r for r in results if r is not None]))
     _write_frames_csv(df, out_csv)
     _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())

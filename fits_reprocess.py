@@ -164,43 +164,97 @@ def gaussian(x, amp, mu, sigma, offset):
 
 
 def _estimate_sigma(profile: np.ndarray, x: np.ndarray, mu_guess: float) -> float:
-    """Estimate sigma via weighted second moment of background-subtracted profile."""
-    baseline = np.median(profile)
-    shifted = np.clip(profile - baseline, 0.0, None)
-    total = float(shifted.sum())
-    if total <= 0.0:
-        return 50.0
-    weights = shifted / total
-    var = float(np.sum(weights * (x - mu_guess) ** 2))
-    return float(np.clip(np.sqrt(max(var, 1.0)), 2.0, profile.size / 4.0))
+    """Estimate sigma by measuring the peak's width at half maximum.
+
+    The previous implementation took the second moment of the whole profile
+    after subtracting only the median. That does not measure the spot: clipping
+    at zero *rectifies* the background noise, so roughly half the samples
+    survive as positive weight spread across the full frame, and because the
+    second moment weights by distance squared, that background dominates
+    completely. On real data it returned the profile.size/4 clip ceiling on
+    essentially every frame -- 256 for a 1024px profile whose true sigma was
+    ~4.3 -- which then seeded curve_fit two orders of magnitude off and drove
+    the fit onto its bounds.
+
+    Measuring the contiguous run above half maximum instead is local to the
+    peak, so background noise cannot contribute. Cutting at half max rather
+    than at the median is what makes FWHM_FACTOR the correct divisor.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    shifted = profile - float(np.median(profile))
+    peak = float(shifted.max())
+    if not np.isfinite(peak) or peak <= 0.0:
+        return float(np.clip(2.0, 1.0, max(profile.size / 4.0, 1.0)))
+
+    half = 0.5 * peak
+    i0 = int(shifted.argmax())
+    lo = i0
+    while lo > 0 and shifted[lo - 1] > half:
+        lo -= 1
+    hi = i0
+    while hi < shifted.size - 1 and shifted[hi + 1] > half:
+        hi += 1
+
+    est = float(hi - lo + 1) / FWHM_FACTOR
+    return float(np.clip(est, 1.0, max(profile.size / 4.0, 1.0)))
 
 
 def _fit_one_profile(profile: np.ndarray):
-    """Fit a single Gaussian to a 1D profile. Returns (amp, mu, sigma, offset) or NaNs."""
+    """Fit a single Gaussian to a 1D profile. Returns (amp, mu, sigma, offset) or NaNs.
+
+    Two things here were wrong before and are worth stating explicitly:
+
+    1. `p0_amp` was `profile.max()`, but `gaussian` defines amp as height ABOVE
+       offset. The starting model therefore predicted roughly twice the data's
+       peak (21955 + 21029 against 21955 on a measured frame). It must be the
+       height above the baseline.
+
+    2. The retry ladder `break`-ed on the first seed that did not raise, which
+       accepts an answer rather than choosing one. On real frames the first rung
+       converged to a railed fit with RMS residual 93.6 while later rungs
+       reached 61.2 and were never tried. Scoring every seed that converges and
+       keeping the lowest residual is the actual fix; without it, correcting the
+       estimator alone still leaves the ladder able to pick a worse answer.
+
+    Three seeds are enough now that the estimate is real. They bracket it
+    multiplicatively so a systematically high or low estimate is still covered.
+    """
     try:
+        profile = np.asarray(profile, dtype=np.float64)
+        if profile.size < 3 or not np.all(np.isfinite(profile)):
+            return np.nan, np.nan, np.nan, np.nan
+
         x = np.arange(profile.size, dtype=np.float64)
         mu_guess = float(profile.argmax())
         sigma_est = _estimate_sigma(profile, x, mu_guess)
+        offset_guess = float(np.median(profile))
+        amp_guess = float(profile.max()) - offset_guess
+
+        sigma_hi = profile.size / 2.0
         bounds = (
             [0.0, 0.0, 1.0, -np.inf],
-            [np.inf, float(profile.size), profile.size / 2.0, np.inf],
+            [np.inf, float(profile.size), sigma_hi, np.inf],
         )
-        p0_amp = float(profile.max())
-        p0_off = float(np.median(profile))
-        popt = None
-        for s in [sigma_est, sigma_est / 2.0, sigma_est * 2.0, 10.0, 50.0, 100.0]:
+
+        best = None
+        best_resid = np.inf
+        for s in (sigma_est, sigma_est * 2.0, sigma_est * 0.5):
+            s = float(np.clip(s, 1.0, np.nextafter(sigma_hi, 0.0)))
             try:
                 popt, _ = curve_fit(
                     gaussian, x, profile,
-                    p0=[p0_amp, mu_guess, s, p0_off],
+                    p0=[amp_guess, mu_guess, s, offset_guess],
                     bounds=bounds, maxfev=5000,
                 )
-                break
             except Exception:
                 continue
-        if popt is None:
+            resid = float(np.sqrt(np.mean((gaussian(x, *popt) - profile) ** 2)))
+            if resid < best_resid:
+                best_resid, best = resid, popt
+
+        if best is None:
             return np.nan, np.nan, np.nan, np.nan
-        amp, mu, sigma, offset = popt
+        amp, mu, sigma, offset = best
         return amp, mu, abs(sigma), offset
     except Exception:
         return np.nan, np.nan, np.nan, np.nan
@@ -381,6 +435,19 @@ def run_key(run_dir: Path) -> str:
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
+
+def _order_frames(df: pd.DataFrame) -> pd.DataFrame:
+    """Order rows by frame number, preserving discovery order among ties.
+
+    The stable sort is required, not cosmetic. Frame numbers are not unique in
+    31 of ~78 runs: 22 have three rows at frame_num=-1 (older passes that
+    ingested their own plot PNGs, before _GENERATED_PNG_RE) and about 9 have
+    genuine duplicates among real frames. pandas defaults to quicksort, which is
+    unstable, so those ties would land in arbitrary order -- and csv_to_dotplots
+    baselines positions on the first surviving frame, so a reordering at the
+    front shifts every position in the run by a constant."""
+    return df.sort_values("frame_num", kind="stable").reset_index(drop=True)
+
 
 def _write_frames_csv(df: pd.DataFrame, path: Path) -> None:
     df[_CSV_COLS].to_csv(path, index=False)
@@ -710,7 +777,7 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
                 f.cancel()
             raise
 
-    df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
+    df = _order_frames(pd.DataFrame(results))
     _write_frames_csv(df, out_csv)
     _mirror_for_run(out_csv, run_dir)
 
@@ -773,7 +840,7 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                 f.cancel()
             raise
 
-    df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
+    df = _order_frames(pd.DataFrame(results))
     _write_frames_csv(df, out_csv)
     _mirror_for_run(out_csv, run_dir)
 
