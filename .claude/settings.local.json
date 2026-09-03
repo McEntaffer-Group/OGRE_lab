@@ -16,7 +16,9 @@
       "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" fits_reprocess.py --run genieshots)",
       "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" fits_reprocess.py --run genieshots --force)",
       "Bash(\"D:\\\\Users\\\\jad507\\\\PycharmProjects\\\\ReverseTelescopeDot\\\\.venv\\\\Scripts\\\\python.exe\" -u fits_reprocess.py --run zoeysecondarygenie)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Read(//e/Reverse Telescope Test Data/20260213_data/allmetal/**)",
+      "Read(//e/Reverse Telescope Test Data/20260213_data/allmetal/allmetal_fits/**)"
     ]
   }
 }
