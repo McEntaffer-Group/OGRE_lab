@@ -10,7 +10,27 @@ For each run, write {runname}_frames.csv with per-frame dot data:
     frame_num, filename, timestamp,
     mu_x, mu_y, sigma_x, sigma_y, fwhm_x, fwhm_y,
     amp_x, amp_y, offset_x, offset_y,
-    fit_ok, n_peaks_x, n_peaks_y
+    fit_ok, n_peaks_x, n_peaks_y,
+    nx, ny, resid_x, resid_y, on_bound_x, on_bound_y,
+    noise_x, noise_y, two_component, two_comp_sep
+
+fit_ok is a RANGE GATE, not a convergence flag: it is true when both FWHMs land
+inside (FWHM_MIN_PX, FWHM_MAX_PX) and both centroids are finite. A fit that
+converged cleanly to a genuinely broad spot is fit_ok=False; a fit that railed
+onto a bound inside the gate is fit_ok=True. The columns that mean the other
+two things:
+    converged   -> mu_x / mu_y are non-NaN
+    hit a wall  -> on_bound_x / on_bound_y
+    fit quality -> resid_x / resid_y (RMS residual, same counts as the data)
+    model right -> resid_x / noise_x. ~1.0 means the residual IS the noise and
+                   there is nothing left to explain. ~5 is two-dot
+                   contamination; 20-60 means a single Gaussian does not
+                   describe the data (a truncated or skewed source). This is
+                   the only scale-free one -- resid alone cannot be compared
+                   between runs whose sources differ 200x in brightness.
+    two sources -> two_component / two_comp_sep. Blind to overlapping or
+                   mid-crossing pairs by construction (it requires separation);
+                   resid/noise covers that case instead.
 
 All spatial values are in PIXELS. No arcsec conversion happens here; downstream code
 looks up per-run pixel scale in pixel_scales.csv when needed.
@@ -76,6 +96,7 @@ import pandas as pd
 from astropy.io import fits
 from PIL import Image
 from scipy.optimize import curve_fit
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
 
 # csv_to_dotplots lives alongside this file; import lazily-safe (no side effects at import).
@@ -104,6 +125,10 @@ MOVIE_SAMPLE_FRAMES = 10
 # Ask ffmpeg for the NVIDIA hardware H.264 encoder; falls back to libx264
 # automatically if the encoder isn't available or the call fails.
 MOVIE_USE_NVENC = True
+
+# Wide compared with a ~5px dot, narrow compared with a ~390px laser blob.
+# Calibrated on 20260105/postwinterbreak.
+BOXCAR_PX = 41
 
 PEAK_HEIGHT_FRAC = 0.50
 PEAK_MIN_DISTANCE_PX = 50
@@ -147,6 +172,14 @@ _CSV_COLS = [
     "mu_x", "mu_y", "sigma_x", "sigma_y", "fwhm_x", "fwhm_y",
     "amp_x", "amp_y", "offset_x", "offset_y",
     "fit_ok", "n_peaks_x", "n_peaks_y",
+    # Evidence for the fit, not just its answer. All four are byproducts of
+    # fitting -- nx/ny size the bounds, resid scores the fit -- and can only be
+    # produced during a fit, so they cannot be backfilled onto old CSVs.
+    "nx", "ny", "resid_x", "resid_y", "on_bound_x", "on_bound_y",
+    # resid/noise is the scale-free goodness of fit: ~1.0 when the single
+    # Gaussian model is right, ~5 for two-dot contamination, 20-60 when the
+    # model does not describe the data at all.
+    "noise_x", "noise_y", "two_component", "two_comp_sep",
 ]
 
 
@@ -199,10 +232,46 @@ def _estimate_sigma(profile: np.ndarray, x: np.ndarray, mu_guess: float) -> floa
     return float(np.clip(est, 1.0, max(profile.size / 4.0, 1.0)))
 
 
-def _fit_one_profile(profile: np.ndarray):
-    """Fit a single Gaussian to a 1D profile. Returns (amp, mu, sigma, offset) or NaNs.
+def _profile_bounds(size: int):
+    """curve_fit bounds for a profile of this length: ([amp, mu, sigma, offset])."""
+    return (
+        [0.0, 0.0, 1.0, -np.inf],
+        [np.inf, float(size), size / 2.0, np.inf],
+    )
 
-    Two things here were wrong before and are worth stating explicitly:
+
+def on_bound(size: int, mu: float, sigma: float,
+             tol_mu: float = 1e-3, tol_sigma: float = 1e-6) -> bool:
+    """True if the fit came to rest against one of its own bounds.
+
+    This, not a large sigma, is the reliable failure signature. Several runs
+    have genuinely broad spots -- sigma ~160 with amp near offset and mu
+    nowhere near an edge -- and those are real data, not bad fits. A parameter
+    pinned to the edge of the box it was allowed to search is unambiguous: the
+    optimiser wanted to keep going and could not.
+
+    A declined fit (NaN) is not a railed fit; it reports False.
+    """
+    if not (np.isfinite(mu) and np.isfinite(sigma)):
+        return False
+    return bool(
+        mu < tol_mu
+        or mu > size - tol_mu
+        or sigma < 1.0 + tol_sigma
+        or sigma > size / 2.0 - tol_sigma
+    )
+
+
+def _fit_profile(profile: np.ndarray) -> dict:
+    """Fit a single Gaussian to a 1D profile.
+
+    Returns a dict with amp/mu/sigma/offset plus the evidence needed to judge
+    the fit later: `resid` (RMS residual) and `on_bound`. Those two are
+    computed here anyway -- the residual to score seeds, the bounds to build
+    the fit -- and were previously discarded, which is why diagnosing a bad fit
+    meant re-running the fit by hand.
+
+    Two things were wrong here originally and are worth stating explicitly:
 
     1. `p0_amp` was `profile.max()`, but `gaussian` defines amp as height ABOVE
        offset. The starting model therefore predicted roughly twice the data's
@@ -210,19 +279,28 @@ def _fit_one_profile(profile: np.ndarray):
        height above the baseline.
 
     2. The retry ladder `break`-ed on the first seed that did not raise, which
-       accepts an answer rather than choosing one. On real frames the first rung
-       converged to a railed fit with RMS residual 93.6 while later rungs
-       reached 61.2 and were never tried. Scoring every seed that converges and
-       keeping the lowest residual is the actual fix; without it, correcting the
-       estimator alone still leaves the ladder able to pick a worse answer.
+       accepts an answer rather than choosing one. On real frames the first
+       seed converged to a railed fit with RMS residual 93.6 while later seeds
+       reached 61.2 and were never tried.
 
-    Three seeds are enough now that the estimate is real. They bracket it
-    multiplicatively so a systematically high or low estimate is still covered.
+    Fixing (1) and the estimator turned out to make the ladder nearly dead
+    weight: across all 234 committed fixture profiles, all three seeds land in
+    the same basin, the largest mu disagreement between them is 0.002 px, and
+    no seed ever fails. So this now takes the fast path -- one fit from the
+    measured estimate -- and only re-seeds when that result is actually
+    suspect (declined, or resting on a bound). The alternates cost ~2x when
+    they run, and on the fixtures they never need to.
+
+    `on_bound` is recorded per frame, so how often the fallback is needed is
+    now measurable from the CSVs instead of guessed at. If it never fires
+    across a full reprocess, the fallback can go.
     """
+    out = {"amp": np.nan, "mu": np.nan, "sigma": np.nan, "offset": np.nan,
+           "resid": np.nan, "on_bound": False, "n_seeds": 0}
     try:
         profile = np.asarray(profile, dtype=np.float64)
         if profile.size < 3 or not np.all(np.isfinite(profile)):
-            return np.nan, np.nan, np.nan, np.nan
+            return out
 
         x = np.arange(profile.size, dtype=np.float64)
         mu_guess = float(profile.argmax())
@@ -230,15 +308,11 @@ def _fit_one_profile(profile: np.ndarray):
         offset_guess = float(np.median(profile))
         amp_guess = float(profile.max()) - offset_guess
 
-        sigma_hi = profile.size / 2.0
-        bounds = (
-            [0.0, 0.0, 1.0, -np.inf],
-            [np.inf, float(profile.size), sigma_hi, np.inf],
-        )
+        size = profile.size
+        sigma_hi = size / 2.0
+        bounds = _profile_bounds(size)
 
-        best = None
-        best_resid = np.inf
-        for s in (sigma_est, sigma_est * 2.0, sigma_est * 0.5):
+        def attempt(s):
             s = float(np.clip(s, 1.0, np.nextafter(sigma_hi, 0.0)))
             try:
                 popt, _ = curve_fit(
@@ -247,17 +321,144 @@ def _fit_one_profile(profile: np.ndarray):
                     bounds=bounds, maxfev=5000,
                 )
             except Exception:
-                continue
+                return None, np.inf
             resid = float(np.sqrt(np.mean((gaussian(x, *popt) - profile) ** 2)))
-            if resid < best_resid:
-                best_resid, best = resid, popt
+            return popt, resid
 
+        best, best_resid = attempt(sigma_est)
+        n_seeds = 1
+        # Only pay for alternates when the fast path is not trustworthy.
+        if best is None or on_bound(size, best[1], abs(best[2])):
+            for s in (sigma_est * 2.0, sigma_est * 0.5):
+                popt, resid = attempt(s)
+                n_seeds += 1
+                if popt is not None and resid < best_resid:
+                    best, best_resid = popt, resid
+
+        out["n_seeds"] = n_seeds
         if best is None:
-            return np.nan, np.nan, np.nan, np.nan
+            return out
         amp, mu, sigma, offset = best
-        return amp, mu, abs(sigma), offset
+        sigma = abs(sigma)
+        out.update({"amp": amp, "mu": mu, "sigma": sigma, "offset": offset,
+                    "resid": best_resid, "on_bound": on_bound(size, mu, sigma)})
+        return out
     except Exception:
-        return np.nan, np.nan, np.nan, np.nan
+        return out
+
+
+def _fit_one_profile(profile: np.ndarray):
+    """Fit a single Gaussian. Returns (amp, mu, sigma, offset) or NaNs.
+
+    Thin wrapper over `_fit_profile` for callers that only want the four
+    parameters.
+    """
+    r = _fit_profile(profile)
+    return r["amp"], r["mu"], r["sigma"], r["offset"]
+
+
+def _mad(values: np.ndarray) -> float:
+    """Median absolute deviation, scaled to compare with a standard deviation."""
+    v = np.asarray(values, dtype=np.float64)
+    if v.size == 0:
+        return float("nan")
+    return float(1.4826 * np.median(np.abs(v - np.median(v))))
+
+
+def wing_noise(profile: np.ndarray, amp, mu, sigma, offset,
+               out_sigmas: float = 3.0, min_samples: int = 30) -> float:
+    """Noise level measured where the fit says there is no source.
+
+    `resid` alone cannot be compared between runs: springgenie's source is
+    ~200x brighter than a real dot, so its residual is large in counts while
+    being small relative to its own amplitude. Dividing resid by THIS gives a
+    scale-free goodness of fit that reads ~1.0 when the model is right:
+
+        allmetal / springbreak (single dot)   resid/noise = 1.0 - 1.2
+        postwinterbreak (two dots)                          5.5 - 6.4
+        springgenie (truncated skewed laser)                 19 - 57
+
+    NaN means there was no usable background left to measure -- the source
+    fills the frame -- which is itself a diagnosis, not a missing value.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    if not (np.isfinite(mu) and np.isfinite(sigma)) or sigma <= 0:
+        return float("nan")
+    x = np.arange(profile.size, dtype=np.float64)
+    resid = profile - gaussian(x, amp, mu, sigma, offset)
+    wing = np.abs(x - mu) > out_sigmas * sigma
+    if int(wing.sum()) < min_samples:
+        return float("nan")
+    return _mad(resid[wing])
+
+
+def _compact_peak(profile: np.ndarray, popt, boxcar: int = BOXCAR_PX):
+    """Locate the narrowest strong feature the Gaussian fit did not explain.
+
+    High-passing the residual (subtracting a boxcar of itself) suppresses the
+    broad model mismatch that otherwise swamps a plain residual test. On
+    postwinterbreak that mismatch has MAD ~250 counts against a ~600 count dot,
+    so a plain residual scores the real dot at 0.6 sigma; after high-passing it
+    scores 8-17 sigma and lands within 1px of the true 2D dot position.
+
+    The first and last `boxcar` samples are excluded: a boxcar has no valid
+    output there, and in practice that artifact produced spurious peaks at
+    index 30-36 on several runs.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    amp, mu, sigma, offset = popt
+    if not (np.isfinite(mu) and np.isfinite(sigma)):
+        return -1, float("nan")
+    x = np.arange(profile.size, dtype=np.float64)
+    resid = profile - gaussian(x, amp, mu, sigma, offset)
+    hp = resid - uniform_filter1d(resid, boxcar, mode="nearest")
+    noise = _mad(hp)
+    margin = min(boxcar, max(1, profile.size // 4))
+    interior = hp[margin:profile.size - margin]
+    if interior.size == 0 or not np.isfinite(noise) or noise <= 0:
+        return -1, float("nan")
+    i = int(np.argmax(interior)) + margin
+    return i, float(hp[i] / noise)
+
+
+def second_component(px, py, popt_x, popt_y, min_sigma: float = 5.0,
+                     min_sep_sigmas: float = 2.0, min_sep_frac: float = 0.05):
+    """Detect a fit that has locked onto the wrong one of two sources.
+
+    Separation, not significance, is the discriminator. Measured on real frames:
+
+        allmetal         4.3 sigma but   1.3 px separation -> single dot
+        frosty           5.5 sigma and 508 px separation   -> two dots
+        postwinterbreak 18.8 sigma and 375 px separation   -> two dots
+
+    Two floors are needed and neither alone works: a multiple of sigma alone
+    false-positives on narrow dots with slightly non-Gaussian cores, while a
+    threshold loose enough to suppress those would reject postwinterbreak,
+    whose real dot sits only 2.4 sigma from the blob.
+
+    KNOWN BLIND SPOT: because it requires separation above a floor, this cannot
+    see two sources that overlap or are mid-crossing. `resid`/`wing_noise` can
+    -- overlapping sources still inflate the residual -- so the two columns are
+    complementary and neither replaces the other.
+
+    Returns (ix, iy, separation_px, significance) or None.
+    """
+    ix, sx = _compact_peak(px, popt_x)
+    iy, sy = _compact_peak(py, popt_y)
+    if not (np.isfinite(sx) or np.isfinite(sy)):
+        return None
+    sig = float(np.nanmax([sx, sy]))
+    if not np.isfinite(sig) or sig < min_sigma:
+        return None
+    mu_x, mu_y = popt_x[1], popt_y[1]
+    if not (np.isfinite(mu_x) and np.isfinite(mu_y)):
+        return None
+    scale = max(popt_x[2], popt_y[2])
+    if not np.isfinite(scale) or scale <= 0:
+        return None
+    sep = float(np.hypot(mu_x - ix, mu_y - iy))
+    floor = max(min_sep_sigmas * scale, min_sep_frac * max(px.size, py.size))
+    return (ix, iy, sep, sig) if sep > floor else None
 
 
 def _count_peaks(profile: np.ndarray) -> int:
@@ -280,20 +481,46 @@ def _empty_row(filename: str, frame_num: int, timestamp: str) -> dict:
         "amp_x": np.nan, "amp_y": np.nan,
         "offset_x": np.nan, "offset_y": np.nan,
         "fit_ok": False, "n_peaks_x": 0, "n_peaks_y": 0,
+        "nx": 0, "ny": 0,
+        "resid_x": np.nan, "resid_y": np.nan,
+        "on_bound_x": False, "on_bound_y": False,
+        "noise_x": np.nan, "noise_y": np.nan,
+        "two_component": False, "two_comp_sep": np.nan,
     }
 
 
 def _fill_fit_results(out: dict, px_profile: np.ndarray, py_profile: np.ndarray) -> dict:
-    amp_x, mu_x, sigma_x, offset_x = _fit_one_profile(px_profile)
-    amp_y, mu_y, sigma_y, offset_y = _fit_one_profile(py_profile)
+    fx = _fit_profile(px_profile)
+    fy = _fit_profile(py_profile)
+    mu_x, sigma_x = fx["mu"], fx["sigma"]
+    mu_y, sigma_y = fy["mu"], fy["sigma"]
     out.update({
         "mu_x": mu_x, "mu_y": mu_y,
         "sigma_x": sigma_x, "sigma_y": sigma_y,
-        "amp_x": amp_x, "amp_y": amp_y,
-        "offset_x": offset_x, "offset_y": offset_y,
+        "amp_x": fx["amp"], "amp_y": fy["amp"],
+        "offset_x": fx["offset"], "offset_y": fy["offset"],
         "n_peaks_x": _count_peaks(px_profile),
         "n_peaks_y": _count_peaks(py_profile),
+        # nx/ny are the profile lengths, i.e. the image width and height. Every
+        # bound in the fit derives from them, so without these a railed fit is
+        # not detectable from the CSV alone -- it has to be inferred from the
+        # largest value observed, which is fragile.
+        "nx": int(np.asarray(px_profile).size),
+        "ny": int(np.asarray(py_profile).size),
+        "resid_x": fx["resid"], "resid_y": fy["resid"],
+        "on_bound_x": fx["on_bound"], "on_bound_y": fy["on_bound"],
+        "noise_x": wing_noise(px_profile, fx["amp"], mu_x, sigma_x, fx["offset"]),
+        "noise_y": wing_noise(py_profile, fy["amp"], mu_y, sigma_y, fy["offset"]),
     })
+    popt_x = (fx["amp"], mu_x, sigma_x, fx["offset"])
+    popt_y = (fy["amp"], mu_y, sigma_y, fy["offset"])
+    hit = second_component(np.asarray(px_profile, dtype=np.float64),
+                           np.asarray(py_profile, dtype=np.float64),
+                           popt_x, popt_y)
+    # The separation is recorded, not just the verdict, so the floors can be
+    # retuned from the CSVs without another reprocess.
+    out["two_component"] = hit is not None
+    out["two_comp_sep"] = float(hit[2]) if hit is not None else np.nan
     if np.isfinite(sigma_x) and np.isfinite(sigma_y):
         fwhm_x = sigma_x * FWHM_FACTOR
         fwhm_y = sigma_y * FWHM_FACTOR

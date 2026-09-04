@@ -127,3 +127,206 @@ def test_declined_fit_returns_all_nan():
     out = fr._fit_one_profile(flat)
     assert len(out) == 4
     assert all(isinstance(v, float) for v in out)
+
+
+# ---------------------------------------------------------------------------
+# Evidence columns: nx/ny, resid, on_bound
+# ---------------------------------------------------------------------------
+
+def test_wrapper_agrees_with_full_fit(anchors):
+    """_fit_one_profile must stay a pure view of _fit_profile. If they drift,
+    the CSV and the tests stop describing the same fit."""
+    for key in ("allmetal_f011_py", "allmetal_f001_px"):
+        prof = anchors[key]
+        full = fr._fit_profile(prof)
+        assert fr._fit_one_profile(prof) == (
+            full["amp"], full["mu"], full["sigma"], full["offset"])
+
+
+def test_on_bound_ignores_broad_but_real_spots():
+    """The discrimination the whole detector rests on: a genuinely wide spot is
+    not a failure. Several runs fit sigma ~160 with the centroid nowhere near
+    an edge, and flagging those would be a false positive."""
+    x = np.arange(1024.0)
+    broad = fr.gaussian(x, 900.0, 512.0, 160.0, 21000.0)
+    r = fr._fit_profile(broad)
+    assert r["sigma"] == pytest.approx(160.0, rel=1e-3)
+    assert r["on_bound"] is False
+
+
+def test_on_bound_catches_each_bound():
+    """All four ways a fit can come to rest on its box."""
+    size = 512
+    assert fr.on_bound(size, mu=0.0, sigma=5.0) is True             # mu low
+    assert fr.on_bound(size, mu=float(size), sigma=5.0) is True     # mu high
+    assert fr.on_bound(size, mu=250.0, sigma=1.0) is True           # sigma low
+    assert fr.on_bound(size, mu=250.0, sigma=size / 2.0) is True    # sigma high
+    assert fr.on_bound(size, mu=250.0, sigma=5.0) is False          # interior
+
+
+def test_on_bound_is_false_for_a_declined_fit():
+    """A fit that never converged is not a railed fit; conflating them would
+    put NaN rows in the railing census."""
+    assert fr.on_bound(512, mu=np.nan, sigma=np.nan) is False
+
+
+def test_residual_is_recorded_and_matches_a_recomputation(anchors):
+    """resid must be the RMS residual of the fit actually returned -- that is
+    the number that picks between seeds, and it was previously discarded."""
+    for key in ("allmetal_f011_py", "allmetal_f001_px"):
+        prof = anchors[key]
+        r = fr._fit_profile(prof)
+        expect = rms(residual(prof, (r["amp"], r["mu"], r["sigma"], r["offset"])))
+        assert r["resid"] == pytest.approx(expect, rel=1e-9)
+
+
+def test_declined_fit_reports_nan_residual_not_zero():
+    """A fit that never ran reports NaN, not 0.0 -- zero would read as a
+    perfect fit in any downstream sort by residual."""
+    for prof in (np.full(256, np.nan), np.zeros(2, dtype=np.float64)):
+        r = fr._fit_profile(prof)
+        assert np.isnan(r["resid"])
+        assert r["on_bound"] is False
+        assert r["n_seeds"] == 0
+
+
+@pytest.mark.parametrize("prof", [
+    pytest.param(np.zeros(256), id="all_zeros"),
+    pytest.param(np.full(256, 21000.0), id="flat_pedestal"),
+])
+def test_blank_frame_is_fit_ok_but_flagged_on_bound(prof):
+    """A featureless frame does NOT decline. curve_fit converges on the
+    degenerate amp=0 solution, which leaves mu on its lower bound and sigma on
+    its lower bound of 1 -- and FWHM 2.355 sits inside the fit_ok gate, so
+    fit_ok comes out True on a frame with no dot in it at all.
+
+    This is the clearest case for recording on_bound: fit_ok cannot see it,
+    and mu=1e-10 would otherwise enter the position series as a real centroid
+    at pixel 0. Suspected to be the signature behind the runs that rail on the
+    LOWER sigma bound (minutelyovernight, longweekend).
+    """
+    out = fr._fill_fit_results(
+        fr._empty_row("blank.fits", 1, "2026-01-01 00:00:00"),
+        np.asarray(prof, dtype=np.float64), np.asarray(prof, dtype=np.float64))
+    assert out["fit_ok"] is True, "gate no longer lets a blank frame through"
+    assert out["on_bound_x"] is True and out["on_bound_y"] is True
+    assert out["sigma_x"] == pytest.approx(1.0)
+
+
+def test_nx_ny_record_the_profile_lengths():
+    """Every bound derives from these, so a railed fit is only detectable from
+    the CSV if the frame size is in the CSV."""
+    x = np.arange(1024.0)
+    px = fr.gaussian(x, 900.0, 512.0, 5.0, 21000.0)
+    py = fr.gaussian(np.arange(600.0), 900.0, 300.0, 5.0, 21000.0)
+    out = fr._fill_fit_results(
+        fr._empty_row("f.fits", 1, "2026-01-01 00:00:00"), px, py)
+    assert out["nx"] == 1024
+    assert out["ny"] == 600
+    assert out["on_bound_x"] is False and out["on_bound_y"] is False
+    assert np.isfinite(out["resid_x"]) and np.isfinite(out["resid_y"])
+
+
+def test_fast_path_is_taken_on_almost_every_real_profile(all_fixture_profiles):
+    """The ladder is a fallback now, not the normal path. If a change makes the
+    alternates fire routinely, the estimator regressed -- that is the signal
+    this test exists to catch, not the exact count."""
+    counts = [fr._fit_profile(p)["n_seeds"] for p in all_fixture_profiles]
+    fast = sum(1 for c in counts if c == 1)
+    assert fast / len(counts) > 0.90, (
+        f"only {fast}/{len(counts)} profiles took the single-fit fast path")
+
+
+def test_fallback_fires_exactly_when_the_fast_path_rails(all_fixture_profiles):
+    """The fallback's trigger condition must be the recorded one, so that
+    on_bound in the CSV explains the cost after a reprocess."""
+    for p in all_fixture_profiles:
+        r = fr._fit_profile(p)
+        if r["n_seeds"] == 1:
+            assert r["on_bound"] is False
+
+
+# ---------------------------------------------------------------------------
+# noise / two_component
+# ---------------------------------------------------------------------------
+
+def test_resid_over_noise_is_about_one_for_a_clean_single_dot():
+    """The calibration the whole column rests on: when the model is right the
+    residual IS the noise, so the ratio sits near 1 regardless of brightness."""
+    x = np.arange(1024.0)
+    rng = np.random.default_rng(0)
+    for amp, off in ((926.0, 21000.0), (150000.0, 26000.0)):   # 160x brightness
+        prof = fr.gaussian(x, amp, 512.0, 4.3, off) + rng.normal(0, 60.0, 1024)
+        r = fr._fit_profile(prof)
+        noise = fr.wing_noise(prof, r["amp"], r["mu"], r["sigma"], r["offset"])
+        assert 0.5 < r["resid"] / noise < 2.0, (
+            f"amp={amp}: ratio {r['resid'] / noise:.2f} outside the noise-limited band")
+
+
+def test_resid_over_noise_is_scale_free_where_resid_alone_is_not():
+    """resid alone cannot be compared between runs -- a 160x brighter source
+    has a far larger residual while fitting just as well. That is exactly the
+    trap springgenie fell into, so assert the normalisation actually removes it."""
+    x = np.arange(1024.0)
+    rng = np.random.default_rng(1)
+    faint = fr.gaussian(x, 926.0, 512.0, 4.3, 21000.0) + rng.normal(0, 60.0, 1024)
+    bright = fr.gaussian(x, 148160.0, 512.0, 4.3, 21000.0) + rng.normal(0, 9600.0, 1024)
+    rf, rb = fr._fit_profile(faint), fr._fit_profile(bright)
+    nf = fr.wing_noise(faint, rf["amp"], rf["mu"], rf["sigma"], rf["offset"])
+    nb = fr.wing_noise(bright, rb["amp"], rb["mu"], rb["sigma"], rb["offset"])
+    assert rb["resid"] > 20 * rf["resid"], "test setup: brightness gap too small"
+    assert abs(rb["resid"] / nb - rf["resid"] / nf) < 1.0, (
+        "normalised ratios should agree even though raw residuals differ 20x")
+
+
+def test_wing_noise_is_nan_when_the_source_fills_the_frame():
+    """No background left to measure. NaN is the diagnosis, not a gap -- it is
+    how 'the source is larger than the detector' appears in the CSV."""
+    x = np.arange(256.0)
+    prof = fr.gaussian(x, 900.0, 128.0, 400.0, 21000.0)
+    r = fr._fit_profile(prof)
+    assert np.isnan(fr.wing_noise(prof, r["amp"], r["mu"], r["sigma"], r["offset"]))
+
+
+def test_broad_but_real_spot_is_not_flagged_two_component():
+    """A wide single source must not read as two. This is the false positive
+    that would put the 8 genie runs in the two-dot census."""
+    x = np.arange(1024.0)
+    rng = np.random.default_rng(2)
+    prof = fr.gaussian(x, 926.0, 512.0, 160.0, 21000.0) + rng.normal(0, 60.0, 1024)
+    r = fr._fit_profile(prof)
+    popt = (r["amp"], r["mu"], r["sigma"], r["offset"])
+    assert fr.second_component(prof, prof, popt, popt) is None
+
+
+def test_two_well_separated_dots_are_flagged_with_their_separation():
+    x = np.arange(1024.0)
+    rng = np.random.default_rng(3)
+    px = (fr.gaussian(x, 926.0, 312.0, 4.3, 21000.0)
+          + fr.gaussian(x, 700.0, 712.0, 4.3, 0.0) + rng.normal(0, 60.0, 1024))
+    out = fr._fill_fit_results(fr._empty_row("f.fits", 1, "t"), px, px)
+    assert out["two_component"] is True
+    assert np.isfinite(out["two_comp_sep"]) and out["two_comp_sep"] > 100
+
+
+def test_two_component_is_blind_to_overlapping_pairs_but_resid_is_not():
+    """Documents the known blind spot rather than pretending it is absent.
+
+    second_component needs separation above a floor, so a small dot crossing a
+    large one is invisible to it -- the case that also defeats n_peaks. The
+    resid/noise ratio does see it, which is why both columns exist.
+    """
+    x = np.arange(1024.0)
+    rng = np.random.default_rng(4)
+    clean = fr.gaussian(x, 4000.0, 512.0, 40.0, 21000.0) + rng.normal(0, 60.0, 1024)
+    overlap = (fr.gaussian(x, 4000.0, 512.0, 40.0, 21000.0)
+               + fr.gaussian(x, 2000.0, 524.0, 4.0, 0.0) + rng.normal(0, 60.0, 1024))
+    rc, ro = fr._fit_profile(clean), fr._fit_profile(overlap)
+    poptc = (rc["amp"], rc["mu"], rc["sigma"], rc["offset"])
+    popto = (ro["amp"], ro["mu"], ro["sigma"], ro["offset"])
+    assert fr.second_component(overlap, overlap, popto, popto) is None, \
+        "separation floor should make this invisible -- if not, retune the test"
+    nc = fr.wing_noise(clean, *poptc)
+    no = fr.wing_noise(overlap, *popto)
+    assert ro["resid"] / no > 2.0 * (rc["resid"] / nc), \
+        "resid/noise must catch what the separation test cannot"

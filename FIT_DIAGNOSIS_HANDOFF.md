@@ -2,6 +2,23 @@
 
 > **STALE IN PARTS — read `NEXT_SESSION.md` first.**
 >
+> Superseded again 2026-09-04. Additionally stale as of that date:
+>
+> * **The retry ladder described throughout is gone.** The fit takes one shot
+>   from the measured estimate and re-seeds only when that rails or declines.
+>   Section 5.1's three-seed proposal was implemented and then measured out:
+>   all three seeds agree to within 0.002 px on real profiles.
+> * **Section 5.1's estimator is not what shipped.** It cut at the median and
+>   ran ~2x high; the shipped version cuts at half maximum, which makes 2.355
+>   the correct divisor and the estimate right rather than merely bracketed.
+> * **Section 1.5's "21 of ~78 runs" is superseded.** The real count from the
+>   per-run CSVs on E: is 25 of 96.
+> * **Section 6 item 3's instrumentation is done** — plus `noise_x/y`,
+>   `two_component`, `two_comp_sep`. See `CSV_SCHEMA.md`.
+> * **Section 6 item 5** (`FWHM_MAX_PX` vs 500) is decided for now: keep 1000,
+>   for the reason in `NEXT_SESSION.md`. The gate is the wrong instrument
+>   regardless of its value.
+>
 > Superseded 2026-09-03. What changed:
 >
 > * **The bug is FIXED.** Section 6 item 1 ("Nothing is fixed yet") and the

@@ -13,7 +13,7 @@ import fits_reprocess as fr
 
 # Wide compared with a ~5px dot, narrow compared with a ~390px laser blob.
 # Calibrated on 20260105/postwinterbreak.
-BOXCAR = 41
+BOXCAR = fr.BOXCAR_PX
 
 
 def rms(values):
@@ -57,73 +57,21 @@ def on_bound(profile, popt, tol_mu=1e-3, tol_sigma=1e-6):
 
 
 def compact_peak(profile, popt, boxcar=BOXCAR):
-    """Locate the narrowest strong feature the Gaussian fit did not explain.
+    """Delegates to the promoted implementation in fits_reprocess.
 
-    High-passing the residual (subtracting a boxcar of itself) suppresses the
-    broad model mismatch that swamps a plain-residual test. On postwinterbreak
-    that mismatch has MAD ~250 counts against a ~600 count dot, so a plain
-    residual test scores the real dot at 0.6 sigma; after high-passing it scores
-    8-17 sigma and its argmax lands within 1px of the true 2D dot position.
-
-    The first and last `boxcar` samples are excluded from the search. A boxcar
-    filter has no valid output there -- whatever edge handling it uses is an
-    extrapolation -- and in practice that artifact produced spurious peaks at
-    index 30-36 on several runs, which is what this margin removes.
-
-    Returns (index, significance).
+    This used to be a separate copy. Now that the pipeline records
+    two_component, a second copy here could drift from the code that actually
+    produced the CSV, and the tests would stop describing production.
     """
-    resid = residual(profile, popt)
-    hp = resid - uniform_filter1d(resid, boxcar, mode="nearest")
-    noise = mad(hp)
-    margin = min(boxcar, max(1, profile.size // 4))
-    interior = hp[margin:profile.size - margin]
-    if interior.size == 0:
-        return int(np.argmax(hp)), (float(hp.max() / noise) if noise > 0 else np.inf)
-    i = int(np.argmax(interior)) + margin
-    return i, (float(hp[i] / noise) if noise > 0 else np.inf)
+    return fr._compact_peak(profile, popt, boxcar=boxcar)
 
 
 def second_component(px, py, popt_x, popt_y, min_sigma=5.0,
                      min_sep_sigmas=2.0, min_sep_frac=0.05):
-    """Detect a fit that has locked onto the wrong one of two sources.
-
-    Separation, not significance, is the discriminator. Measured on real frames:
-
-        allmetal         4.3 sigma but   1.3 px separation -> single dot
-        frosty           5.5 sigma and 508 px separation   -> two dots
-        postwinterbreak 18.8 sigma and 375 px separation   -> two dots
-
-    Two separate floors are needed, and neither alone works:
-
-    * `min_sep_sigmas` alone fails on narrow dots. A sigma~5 dot whose core is
-      slightly non-Gaussian leaves residual structure a few px off centre; at
-      1 sigma that reads as a companion, which produced dozens of false
-      positives at separations of 6-30 px.
-    * `min_sep_sigmas` alone ALSO fails on broad blobs. postwinterbreak's real
-      dot sits only 2.4 sigma from the blob it is being confused with, so any
-      threshold loose enough to reject the narrow-dot artifacts above would
-      reject the one case we have confirmed in 2D.
-
-    Requiring the separation to clear both a multiple of the fitted sigma and a
-    fraction of the frame keeps postwinterbreak (375 px, 2.4 sigma, frame 2560)
-    while dropping the narrow-dot artifacts (8 px, 1.4 sigma, frame 1280).
-
-    Returns None, or (ix, iy, separation_px, significance).
-    """
-    ix, sx = compact_peak(px, popt_x)
-    iy, sy = compact_peak(py, popt_y)
-    sig = max(sx, sy)
-    if sig < min_sigma:
-        return None
-    mu_x, mu_y = popt_x[1], popt_y[1]
-    if not (np.isfinite(mu_x) and np.isfinite(mu_y)):
-        return None
-    scale = max(popt_x[2], popt_y[2])
-    if not np.isfinite(scale) or scale <= 0:
-        return None
-    sep = float(np.hypot(mu_x - ix, mu_y - iy))
-    floor = max(min_sep_sigmas * scale, min_sep_frac * max(px.size, py.size))
-    return (ix, iy, sep, sig) if sep > floor else None
+    """Delegates to the promoted implementation in fits_reprocess."""
+    return fr.second_component(px, py, popt_x, popt_y, min_sigma=min_sigma,
+                               min_sep_sigmas=min_sep_sigmas,
+                               min_sep_frac=min_sep_frac)
 
 
 def classify(profile, popt):

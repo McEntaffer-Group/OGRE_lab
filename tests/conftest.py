@@ -63,6 +63,19 @@ def failing():
 
 
 @pytest.fixture(scope="session")
+def all_fixture_profiles():
+    """Every committed 1D profile, for tests that assert on the population
+    rather than on a named frame."""
+    out = []
+    for name in ("anchors.npz", "healthy.npz", "failing.npz"):
+        for prof in _load(name).values():
+            prof = np.asarray(prof, dtype=np.float64)
+            if prof.ndim == 1 and prof.size >= 3 and np.all(np.isfinite(prof)):
+                out.append(prof)
+    return out
+
+
+@pytest.fixture(scope="session")
 def fit_cache():
     """Memoized _fit_one_profile keyed by fixture name.
 
