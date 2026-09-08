@@ -819,6 +819,7 @@ def main(argv: list[str] | None = None) -> int:
 
     total = len(fits_runs) + len(image_runs)
     print(f"Discovered {len(fits_runs)} FITS run(s) and {len(image_runs)} image run(s) under {root}.")
+    fr.print_discovery_anomalies(root)
 
     if args.dry_run:
         for r in fits_runs:

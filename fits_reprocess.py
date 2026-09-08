@@ -235,7 +235,7 @@ def _estimate_sigma(profile: np.ndarray, x: np.ndarray, mu_guess: float) -> floa
 def _profile_bounds(size: int):
     """curve_fit bounds for a profile of this length: ([amp, mu, sigma, offset])."""
     return (
-        [0.0, 0.0, 1.0, -np.inf],
+        [0.0, 0.0, 0.70, -np.inf],
         [np.inf, float(size), size / 2.0, np.inf],
     )
 
@@ -925,31 +925,161 @@ def migrate_image_outputs(root: Path, apply: bool = False) -> int:
     return total
 
 
+def fits_dir_for(run_dir: Path) -> Path | None:
+    """The run's FITS folder, or None if it has not been converted.
+
+    The name must match the run folder exactly: {run}/{run}_fits. Both
+    process_fits_run implementations hardcode that same construction, so
+    accepting any *_fits here would discover runs the processor then cannot
+    read. A folder holding a *_fits subdir under some other name is reported by
+    discovery_anomalies() instead of being silently included or silently
+    dropped.
+    """
+    fits_dir = run_dir / f"{run_dir.name}_fits"
+    return fits_dir if fits_dir.is_dir() else None
+
+
+def _converted_run_names(root: Path, date: str) -> set[str]:
+    """Casefolded names of runs under {date}_data/ that have a FITS conversion.
+
+    Casefolded because {date}/bigShakeB and {date}_data/bigshakeB are the same
+    run recorded with different capitalisation. On Windows the two paths even
+    resolve to the same directory; on a case-sensitive filesystem they would
+    not, and the image copy would be reprocessed as if it were a separate run.
+    """
+    data_dir = root / (date + "_data")
+    if not data_dir.is_dir():
+        return set()
+    return {p.name.casefold() for p in data_dir.iterdir()
+            if p.is_dir() and fits_dir_for(p) is not None}
+
+
 def _discover_fits_runs(root: Path) -> list[Path]:
-    """Find run folders with a *_fits subfolder under *_data/ directories."""
+    """Find run folders with a matching {run}_fits subfolder under *_data/."""
     runs = []
     for data_dir in sorted(root.glob("*_data")):
         if not data_dir.is_dir():
             continue
         for run_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
-            fits_dir = run_dir / f"{run_dir.name}_fits"
-            if fits_dir.is_dir():
+            if fits_dir_for(run_dir) is not None:
                 runs.append(run_dir)
     return runs
 
 
 def _discover_image_runs(root: Path) -> list[Path]:
-    """Find run folders with BMP/PNG files under {date}/ dirs that have no {date}_data sibling."""
+    """Find BMP/PNG run folders under {date}/ that have no FITS conversion.
+
+    A {date}_data/ sibling means *some* of that date was converted to FITS, not
+    that all of it was. Skipping the whole date on the strength of that sibling
+    hides every run of that date which was never converted -- they are invisible
+    to both discovery paths and silently never processed. So exclude runs
+    one at a time, by whether that specific run has a FITS counterpart.
+    """
     runs = []
     for date_dir in sorted(root.iterdir()):
         if not date_dir.is_dir() or date_dir.name.endswith("_data"):
             continue
-        if (root / (date_dir.name + "_data")).exists():
-            continue
+        converted = _converted_run_names(root, date_dir.name)
         for run_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
+            if run_dir.name.casefold() in converted:
+                continue
             if list_run_images(run_dir):
                 runs.append(run_dir)
     return runs
+
+
+def discovery_anomalies(root: Path) -> list[tuple[str, Path, str]]:
+    """Folders discovery deliberately does not process, and why.
+
+    Discovery skipping something is only safe if the skip is visible. Each entry
+    is (kind, path, detail):
+
+      mismatched_fits  a folder under *_data/ holding a *_fits subdir named for
+                       a different run. Not processed: process_fits_run builds
+                       {run}/{run}_fits, so the name has to match. Usually a
+                       duplicate or a rename, but discovery cannot tell which,
+                       and processing it blind would either fail or double-count
+                       a run that already processed under its real name.
+      no_fits          a folder under *_data/ with no *_fits subdir at all.
+                       Normally just an output folder; listed for completeness.
+      case_mismatch    an image run and its FITS counterpart whose names differ
+                       only by capitalisation. Handled correctly, but it is the
+                       one difference that a case-sensitive filesystem would
+                       turn into a duplicated run.
+      partial_conversion
+                       a run whose FITS folder holds fewer frames than its image
+                       folder. FITS is preferred, so the extra images are not
+                       processed. Both known cases are a truncated tail from a
+                       conversion that stopped early, not scattered loss, but
+                       the frames are real and are being dropped.
+      stale_mirror     a *_frames.csv sitting in the image tree for a run that
+                       is processed from FITS. No run rewrites it, so it holds
+                       whatever the last image-based pass produced -- possibly
+                       output from a build predating the current fit.
+    """
+    out: list[tuple[str, Path, str]] = []
+
+    for data_dir in sorted(root.glob("*_data")):
+        if not data_dir.is_dir():
+            continue
+        for run_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
+            if fits_dir_for(run_dir) is not None:
+                continue
+            others = sorted(p for p in run_dir.iterdir()
+                            if p.is_dir() and p.name.endswith("_fits"))
+            if others:
+                n = len(list(others[0].glob("*.fits")))
+                out.append(("mismatched_fits", run_dir,
+                            f"holds {others[0].name}/ ({n} .fits), "
+                            f"expected {run_dir.name}_fits/"))
+            else:
+                out.append(("no_fits", run_dir, "no *_fits subfolder"))
+
+    for date_dir in sorted(root.iterdir()):
+        if not date_dir.is_dir() or date_dir.name.endswith("_data"):
+            continue
+        data_dir = root / (date_dir.name + "_data")
+        if not data_dir.is_dir():
+            continue
+        by_fold = {p.name.casefold(): p.name for p in data_dir.iterdir() if p.is_dir()}
+        converted = _converted_run_names(root, date_dir.name)
+        for run_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
+            fold = run_dir.name.casefold()
+            if fold not in converted:
+                continue
+            if by_fold.get(fold) != run_dir.name:
+                out.append(("case_mismatch", run_dir,
+                            f"FITS counterpart is named {by_fold[fold]!r}"))
+
+            fdir = fits_dir_for(data_dir / by_fold[fold])
+            n_img = len(list_run_images(run_dir))
+            n_fits = len(list(fdir.glob("*.fits"))) if fdir else 0
+            if n_img > n_fits:
+                out.append(("partial_conversion", run_dir,
+                            f"{n_img} images but {n_fits} FITS; "
+                            f"{n_img - n_fits} frame(s) not processed"))
+
+            csv = run_dir / f"{run_dir.name}_frames.csv"
+            if csv.exists():
+                out.append(("stale_mirror", csv,
+                            "run is processed from FITS; this copy is never rewritten"))
+
+    return out
+
+
+def print_discovery_anomalies(root: Path) -> int:
+    """Print discovery_anomalies(); returns how many were found."""
+    found = discovery_anomalies(root)
+    if not found:
+        return 0
+    print(f"\n  {len(found)} folder(s) discovery is skipping:")
+    for kind, path, detail in found:
+        try:
+            shown = path.relative_to(root)
+        except ValueError:
+            shown = path
+        print(f"    [{kind}] {shown}\n        {detail}")
+    return len(found)
 
 
 # ---------------------------------------------------------------------------
@@ -1307,6 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
 
     total = len(fits_runs) + len(image_runs)
     print(f"Discovered {len(fits_runs)} FITS run(s) and {len(image_runs)} image run(s) under {root}.")
+    print_discovery_anomalies(root)
 
     if args.dry_run:
         for r in fits_runs:
