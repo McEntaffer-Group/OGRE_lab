@@ -241,6 +241,52 @@ other. Pinned by
 
 ---
 
+---
+
+# `{run}_summary_reprocess.csv` — the per-run summary
+
+One row per run, written by `csv_to_dotplots.build_summary`. Mirrors
+dot_movie-Copy3's column names, with both px and arcsec variants — **truth's
+unprefixed columns are arcseconds**, which is why `x position` in
+`{run}_summary.csv` matches `x position (as)` here and not `x position (px)`.
+
+`compare_pipelines.TRUTH_PAIRS` compares exactly eight of these against truth:
+position and FWHM, mean and std, both axes, in arcsec. **No drift rate is
+compared.**
+
+## Worst-case drift columns (added 2026-09-08)
+
+```
+x min (px)   x max (px)   x range (px)   x range (as)   x min time   x max time
+y min (px)   y max (px)   y range (px)   y range (as)   y min time   y max time
+```
+
+`range` is peak-to-peak on `mu_*_rel` — how far the dot actually travelled.
+This exists because **neither drift rate on the plot can express it**:
+
+| readout | what it is | `allmetal` y |
+|---|---|---|
+| `Endpoints` | `(y_last - y_first) / span`, two frames | −4.49 px/day |
+| `Least squares` | fit over every frame | +6.92 px/day |
+| `y range (px)` | peak-to-peak | **93.20 px** |
+
+The run climbs 70 px, holds for a day and a half, and comes back. The two rates
+disagree in sign and both round to "a few px/day"; the dot moved 93 px. For
+"did the dot stay on the detector", range is the number.
+
+`min time` / `max time` record when each extreme happened, so an excursion can be
+matched against the environment logs without re-reading the frames CSV.
+
+### A note on the two drift rates
+
+`Endpoints` is the legacy chord from `dot_movie-Copy3.py:564` and `rvts.py:235`.
+It is kept so the legacy plots stay comparable by eye — **not** because anything
+tests it. It consults two frames, so one bad endpoint sets the whole number, and
+frame 0 can be a blank-frame fit sitting on its lower bound: a single 100 px
+outlier at frame 0 moves the chord 1000% where it moves the fit 15%.
+
+---
+
 ## What a healthy row looks like
 
 ```

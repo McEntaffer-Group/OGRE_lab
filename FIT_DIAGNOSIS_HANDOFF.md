@@ -2,7 +2,22 @@
 
 > **STALE IN PARTS — read `NEXT_SESSION.md` first.**
 >
-> Superseded again 2026-09-04. Additionally stale as of that date:
+> **Superseded again 2026-09-08, after the full reprocess ran.** The whole
+> document describes the pre-fix world. What it got right is that railing was
+> the problem; what it could not know:
+>
+> * **Railing is now 11 of 94 runs, 2.41% of frames** — measured on all 503,407
+>   frames rather than inferred from per-run CSVs.
+> * **The remaining failure mode inverted.** It is now overwhelmingly the
+>   *lower* bound (σ→1.0, collapse) rather than the upper-bound explosions this
+>   document is about. Those railers have median amp/noise 1.97 — there is no
+>   source, not a mis-fit source.
+> * **Section 6 item 5 is now urgent, not deferred.** With the fits no longer
+>   exploding, `FWHM_MAX_PX` never fires: `fit_ok` is 100% on every run and
+>   12,107 of 12,113 railed rows pass it. The cap was the only thing keeping
+>   railed fits out of the position series.
+>
+> Superseded 2026-09-04. Additionally stale as of that date:
 >
 > * **The retry ladder described throughout is gone.** The fit takes one shot
 >   from the measured estimate and re-seeds only when that rails or declines.

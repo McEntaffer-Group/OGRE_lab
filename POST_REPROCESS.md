@@ -3,6 +3,47 @@
 Written 2026-09-04, before the weekend reprocess. This is the checklist for the
 session that picks up once it finishes.
 
+> ## STATUS as of 2026-09-08 — the reprocess has run
+>
+> 2026-09-04 17:18 → 2026-09-06 02:37, 33.3 h, 94/94 runs, 503,407 frames.
+>
+> | § | state | result |
+> |---|---|---|
+> | 0 | **done** | 2 of 96 CSVs were stale; cause found and fixed (see below) |
+> | 1 | **done** | railing 25 runs → 11 of 94, 12,113 rows (2.41%) |
+> | 2 | **done** | fallback fired on 11 runs; **keep it**, do not delete |
+> | 3 | **done** | thresholds re-derived at scale; table below |
+> | 4 | **done** | all 8 `*genie` runs confirmed; 2 non-genie runs newly implicated |
+> | 5 | open | lower-bound railers are **not** sharp dots — evidence below, but no 2D look yet |
+> | 6 | half | `test_no_ambiguous_bare_named_mirrors` **cleared**; truth test down to 1 run |
+> | 7 | open | plus new items — see `NEXT_SESSION.md` "Still open" |
+>
+> **The finding that outranks everything else here:** `fit_ok` is now 100% on
+> every run, and **12,107 of the 12,113 railed rows pass it**. `FWHM_MAX_PX` was
+> the only thing keeping railed fits out of the position series, and it stopped
+> firing once the fits stopped exploding. See `NEXT_SESSION.md`.
+>
+> §0 result: `20260814/postspie` and `postspiegenie` lacked the new columns. Not
+> unprocessed data — they are **stale mirrors** in the image tree for runs that
+> process from FITS. The real bug §0 exposed was in discovery, fixed in
+> `29a2594`: a `{date}_data/` sibling made `_discover_image_runs` skip the whole
+> `{date}/` folder, hiding `20250923/collimationtests` entirely. 95 runs now.
+>
+> §3 result, `resid/noise` medians at corpus scale — the 2026-09-04 calibration
+> from twelve hand-picked frames held up well:
+>
+> ```
+> healthy single dot        1.0 – 1.2      (allmetal, springbreak)
+> two-dot contamination     3.4 – 6.4      (postwinterbreak, thanksgiving, snowday)
+> model does not fit       18.8 – 47.0     (all 8 *genie, + newprimary/again)
+> ```
+>
+> §5 evidence: the σ→1.0 population has median amp/noise **1.97** against 71.5
+> for healthy interior fits; 68.6% sit below SNR 3 and only 12 of 11,642 above
+> SNR 10. They are noise, not sub-pixel dots, so the σ ≥ 1 bound is catching a
+> real degeneracy rather than censoring good data. What remains open is looking
+> at actual 2D frames to say *why* there is no source.
+
 Interpreter for everything here (`-X utf8` is required; the default cp1252
 console encoding crashes on non-ASCII output):
 
