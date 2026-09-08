@@ -52,7 +52,7 @@ import pandas as pd
 
 DEFAULT_PIXEL_SCALE = 0.15          # arcsec/pixel; dot_movie-Copy3.ipynb hardcoded value
 DEFAULT_FRAME_RATE  = 1.0 / 60.0    # Hz; dot_movie-Copy3.ipynb default (one frame per minute)
-DEFAULT_FWHM_MIN_PX = 1.0
+DEFAULT_FWHM_MIN_PX = .70
 DEFAULT_FWHM_MAX_PX = 1000.0
 
 # When median timestamp dt is this large, trust it as the frame period.
@@ -231,12 +231,65 @@ class _XAxis(NamedTuple):
     valid: np.ndarray    # bool mask of rows with a usable x value
 
 
+MIN_BUCKETS_FOR_SUBSECOND = 3   # interior buckets needed to estimate a rate
+
+
+def _subsecond_times(ts: pd.Series) -> Optional[pd.Series]:
+    """Spread frames sharing a whole-second timestamp across that second.
+
+    The filenames stamp whole seconds, so a high-cadence burst puts ~50 frames on
+    one instant: 31 of 96 runs carry more than two frames per timestamp, up to 99
+    for nightvideo. Plotted as a line that draws a vertical stroke per second
+    (see maxtest2_position_reprocess.png), and any px/s slope is fitted against a
+    1 Hz clock.
+
+    Frames are placed at the rate implied by the INTERIOR buckets, which are the
+    only ones known to be complete. The first and last buckets are partial --
+    capture began and ended part-way through a second -- and they sit at the two
+    points with the most leverage on a slope fit, so spreading them across a full
+    second they never occupied is the specific way this goes wrong. 15 of 30
+    affected runs open with a bucket under half the interior rate (stability
+    starts with 4 frames where its neighbours hold 51).
+
+    So: every bucket is laid out forwards from its own second, except the first,
+    which is laid out backwards from the following second boundary. When the
+    first bucket is in fact full the two agree, so the rule has no seam.
+
+    Returns None when the rate is not determined, leaving the caller to fall back
+    to frame index rather than invent one.
+    """
+    counts = ts.value_counts().sort_index()
+    if len(counts) < MIN_BUCKETS_FOR_SUBSECOND + 2:
+        return None
+    rate = float(np.median(counts.iloc[1:-1].to_numpy()))
+    if not np.isfinite(rate) or rate < 2:
+        return None
+
+    i = ts.groupby(ts).cumcount().to_numpy(dtype=np.float64)   # position in bucket
+    k = ts.map(counts).to_numpy(dtype=np.float64)              # bucket size
+    # A bucket holding more frames than the estimated rate would otherwise spill
+    # past its own second; the stamped second is the one thing we actually know.
+    r = np.maximum(rate, k)
+
+    off = i / r
+    # The first bucket is partial -- capture began mid-second -- so lay it out
+    # backwards from the following boundary instead of forwards from this one.
+    first = (ts == counts.index[0]).to_numpy()
+    off[first] = 1.0 - (k[first] - i[first]) / r[first]
+
+    delta = pd.to_timedelta(np.round(off * 1e6), unit="us")
+    return (ts.dt.floor("s") + delta).astype(ts.dtype)
+
+
 def _resolve_x(df: pd.DataFrame) -> _XAxis:
     """Plot against timestamps when they exist and actually advance, else frame index.
 
     Falling back matters for runs whose frames all share one timestamp -- the
     high-speed BMP runs stamp whole seconds, so a two-second burst can have every
-    frame at the same instant -- and for CSVs with no timestamp column at all."""
+    frame at the same instant -- and for CSVs with no timestamp column at all.
+
+    When timestamps advance but do not resolve individual frames, the seconds are
+    subdivided by _subsecond_times() rather than left stacked."""
     n = len(df)
     if "timestamp" in df.columns and n >= 2:
         ts = df["timestamp"]
@@ -246,6 +299,17 @@ def _resolve_x(df: pd.DataFrame) -> _XAxis:
             t0, t1 = tv.iloc[0], tv.iloc[-1]
             span = float((t1 - t0).total_seconds())
             if span > 0:
+                if tv.nunique() < 0.5 * len(tv):
+                    spread = _subsecond_times(tv)
+                    if spread is not None:
+                        ts = ts.copy()
+                        ts.loc[spread.index] = spread
+                        t0, t1 = ts[valid].min(), ts[valid].max()
+                        span = float((t1 - t0).total_seconds())
+                    else:
+                        # Rate undetermined: frame index beats a fabricated clock.
+                        return _XAxis(np.arange(n), False, 0.0, None, None,
+                                      np.ones(n, dtype=bool))
                 # NaT rows become NaN date numbers, which matplotlib draws as gaps.
                 return _XAxis(mdates.date2num(ts), True, span, t0, t1, valid)
     return _XAxis(np.arange(n), False, 0.0, None, None, np.ones(n, dtype=bool))

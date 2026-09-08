@@ -128,9 +128,39 @@ def _despike_mask(df: pd.DataFrame, cols, window: int = 11,
                   n_mad: float = 8.0) -> pd.Series:
     """Flag isolated single-frame excursions, preserving sustained drift.
 
-    A global Tukey/IQR fence (what run_bridget_comparison uses) is wrong for these
-    runs: on thanksgiving it deletes 74% of a contiguous 26-hour window where the
-    dot genuinely drifted out and stayed there -- the very event the plot exists to
+    NOT CALLED. Disabled 2026-09-08 -- see the block comment in load_frames().
+    Kept because the idea is sound and worth retuning; the thresholds are not.
+
+    Measured against the 503,407-frame corpus after the fit was fixed, this
+    removes 8,237 frames, of which:
+
+      45.9%  are genuinely railed fits (on_bound) -- now detectable directly
+      36.8%  (3,033) are clean, high-SNR, non-railed fits: real data
+
+    Two things are wrong with it as tuned:
+
+    1. The fence is scale-relative. n_mad * MAD collapses on a quiet run, so the
+       filter is most aggressive exactly where the data is best:
+
+           statictestgenie   155 frames cut at a median deviation of 0.2 px
+           zoeystaticgenie    76 frames cut at 0.1 px
+           night5237       1,299 frames cut (13.8% of the run), SNR 61.7, 0 railed
+
+    2. It judges a frame by its neighbours, so a real momentary excursion is
+       indistinguishable from a bad fit. The corpus has 993 jumps over 100 px
+       that come from good fits (morningsecondly: 103 jumps of ~124 px at
+       SNR 178) -- real events this deletes.
+
+    It also silently rebaselines the plot: mu_*_rel is measured from the first
+    SURVIVING frame, and this removes frame 0 on 17 runs, displacing the whole
+    curve (statictestgenie by 105.8 px, bridgetstatic by 41.1).
+
+    If retuning: gate on per-frame evidence (on_bound, amp/noise) rather than on
+    disagreement with neighbours, and take the baseline from the true row 0.
+
+    A global Tukey/IQR fence (what run_bridget_comparison uses) is worse still:
+    on thanksgiving it deletes 74% of a contiguous 26-hour window where the dot
+    genuinely drifted out and stayed there -- the very event the plot exists to
     show. Comparing each point to a centred rolling MEDIAN instead means a real
     excursion drags the median with it and survives, while a lone bad fit does not."""
     keep = pd.Series(True, index=df.index)
@@ -146,49 +176,77 @@ def _despike_mask(df: pd.DataFrame, cols, window: int = 11,
 
 def load_frames(run_path: Path, require_fit_ok: bool = True,
                 iqr_mult: float = 0.0, despike: bool = True) -> pd.DataFrame:
-    """Load a run's frames, drop failed fits, optionally despike, zero the start.
+    """Load a run's frames, drop non-finite centroids, zero the start.
 
-    The multi-peak filter that run_environment_plot.ipynb applies is deliberately
-    NOT used here: on these runs n_peaks>1 for effectively every frame, so it would
-    empty the dataframe. The global IQR fence is off by default for the reason given
-    in _despike_mask; pass iqr_mult>0 to re-enable it."""
+    Filtering here is deliberately back to "curve_fit did not error": a frame is
+    kept if it produced a finite centroid. The despike and IQR passes below are
+    COMMENTED OUT, not deleted -- see the block comment. The multi-peak filter
+    that run_environment_plot.ipynb applies has never been used here: on these
+    runs n_peaks>1 for effectively every frame, so it would empty the dataframe.
+
+    The three parameters are kept so callers and the CLI keep working, but they
+    are currently inert; passing a non-default value warns rather than silently
+    doing nothing.
+    """
     df = pd.read_csv(frames_csv(run_path), parse_dates=["timestamp"])
     df = df.sort_values("timestamp").reset_index(drop=True)
     n_total = len(df)
 
     finite = np.isfinite(df["mu_x"]) & np.isfinite(df["mu_y"])
-    keep = finite & df["fit_ok"].astype(bool) if require_fit_ok else finite
-    n_fitdrop = int((~keep).sum())
-    df = df[keep].copy()
+    n_fitdrop = int((~finite).sum())
+    df = df[finite].copy()
     if df.empty:
-        raise ValueError(
-            f"No frames survive the fit_ok filter for {run_path.name} "
-            f"({n_total:,} rows). Re-run with --no-fit-ok-filter."
-        )
+        raise ValueError(f"No frames have a finite centroid for {run_path.name} "
+                         f"({n_total:,} rows).")
 
-    n_spike = n_out = 0
-    if despike:
-        m = _despike_mask(df, ("mu_x", "mu_y"))
-        n_spike = int((~m).sum())
-        df = df[m].copy()
+    # ------------------------------------------------------------------
+    # DISABLED 2026-09-08. Both passes below removed real data.
+    #
+    # Measured over the whole 503,407-frame corpus, after the centroid-railing
+    # fix, these were the filters in play:
+    #
+    #   curve_fit did not error (finite mu)      503,407 kept        0 removed
+    #   + fit_ok (an FWHM range gate)            503,400 kept        7 removed
+    #   + despike (what ran until today)         495,163 kept    8,244 removed
+    #
+    # Of the 8,244 the despike removed, 3,033 (36.8%) were clean, high-SNR,
+    # non-railed fits -- real data deleted for disagreeing with its neighbours.
+    # On quiet runs the MAD fence collapses to sub-pixel: statictestgenie lost
+    # 155 frames at a median deviation of 0.2 px. It also removed frame 0 on 17
+    # runs, which silently shifts every point (mu_*_rel is relative to the first
+    # SURVIVING frame) -- statictestgenie's whole curve moved 105.8 px.
+    #
+    # The IQR fence was already off by default: on thanksgiving it deleted 74%
+    # of a real 26-hour excursion.
+    #
+    # To put either back: uncomment, and prefer a per-frame quality gate
+    # (on_bound / amp-over-noise) over a neighbour-comparison. A gate of
+    # "not on_bound and SNR > 5" removes 18,685 frames, which is more than twice
+    # what the despike removed -- so it needs its own justification before it
+    # becomes a default. See _despike_mask.__doc__ and CSV_SCHEMA.md.
+    # ------------------------------------------------------------------
+    # if require_fit_ok:
+    #     df = df[df["fit_ok"].astype(bool)].copy()
+    # if despike:
+    #     df = df[_despike_mask(df, ("mu_x", "mu_y"))].copy()
+    # if iqr_mult > 0:
+    #     def fence(s, m):
+    #         q1, q3 = s.quantile(0.25), s.quantile(0.75)
+    #         return q1 - m * (q3 - q1), q3 + m * (q3 - q1)
+    #     lo_x, hi_x = fence(df["mu_x"], iqr_mult)
+    #     lo_y, hi_y = fence(df["mu_y"], iqr_mult)
+    #     df = df[~((df["mu_x"] < lo_x) | (df["mu_x"] > hi_x)
+    #               | (df["mu_y"] < lo_y) | (df["mu_y"] > hi_y))].copy()
+
     if iqr_mult > 0:
-        def fence(s, m):
-            q1, q3 = s.quantile(0.25), s.quantile(0.75)
-            return q1 - m * (q3 - q1), q3 + m * (q3 - q1)
-        lo_x, hi_x = fence(df["mu_x"], iqr_mult)
-        lo_y, hi_y = fence(df["mu_y"], iqr_mult)
-        outlier = ((df["mu_x"] < lo_x) | (df["mu_x"] > hi_x)
-                   | (df["mu_y"] < lo_y) | (df["mu_y"] > hi_y))
-        n_out = int(outlier.sum())
-        df = df[~outlier].copy()
+        print(f"    note: --iqr-mult {iqr_mult:g} ignored; the IQR fence is "
+              f"commented out in load_frames")
 
     df["mu_x_rel"] = df["mu_x"] - df["mu_x"].iloc[0]
     df["mu_y_rel"] = df["mu_y"] - df["mu_y"].iloc[0]
     df = df.set_index("timestamp")
-    detail = f"{n_fitdrop:,} failed fit/non-finite, {n_spike:,} isolated spikes"
-    if iqr_mult > 0:
-        detail += f", {n_out:,} IQR outliers at {iqr_mult}x"
-    print(f"    {len(df):,} of {n_total:,} frames kept ({detail})")
+    print(f"    {len(df):,} of {n_total:,} frames kept "
+          f"({n_fitdrop:,} non-finite centroid; no other filtering)")
     return df
 
 
@@ -354,12 +412,14 @@ def main(argv=None) -> int:
     p.add_argument("--out-dir", type=Path, default=None,
                    help="output directory (default: the run's own folder)")
     p.add_argument("--no-fit-ok-filter", action="store_true",
-                   help="keep frames whose fit_ok is False (centroids may still be valid)")
+                   help="(inert) fit_ok filtering is commented out; frames are "
+                        "kept whenever the centroid is finite")
     p.add_argument("--no-despike", action="store_true",
-                   help="keep isolated single-frame excursions")
+                   help="(inert) despiking is commented out; isolated excursions "
+                        "are always kept -- they can be real momentary drift")
     p.add_argument("--iqr-mult", type=float, default=0.0,
-                   help="also apply a global Tukey fence at this multiple "
-                        "(default 0 = off; it deletes sustained real drift)")
+                   help="(inert) the global Tukey fence is commented out; it "
+                        "deleted 74%% of a real 26-hour excursion on thanksgiving")
     p.add_argument("--with-run", default=None, metavar="RUNNAME",
                    help="companion camera run for a second drift panel "
                         "(e.g. postspiegenie); only valid with a single run")
