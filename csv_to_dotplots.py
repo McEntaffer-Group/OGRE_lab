@@ -378,22 +378,66 @@ def _finish_x_axis(fig, bottom_ax, xax: _XAxis) -> None:
 
 
 def _slope_line(ax, xax: _XAxis, ys, color: str, alpha: float = 0.5):
-    """Draw the first-to-last chord and label it with the slope in px per time unit."""
+    """Draw two drift lines: the legacy endpoint chord and a least-squares fit.
+
+    The chord is `(y_last - y_first) / span` -- what dot_movie-Copy3 computes at
+    its line 564 and rvts.py at 235. It is kept so the legacy plots stay directly
+    comparable by eye, NOT because anything tests it: compare_pipelines.TRUTH_PAIRS
+    checks position and FWHM means and stds, and no slope is among them.
+
+    It is kept despite describing the data badly. It consults exactly two frames,
+    so it reports allmetal's y drift as -4.49 px/day for a run that climbs 70 px,
+    holds for a day and a half, and comes back. A single bad endpoint sets the
+    whole number, and frame 0 can be a blank-frame fit sitting on its lower bound.
+
+    The least-squares fit uses every frame, so it describes the trend the plot
+    actually shows. Both are drawn and labelled; neither is derived from the
+    other, and they disagree exactly when the run is not monotonic.
+
+    Returns (chord, fit) in px per time unit.
+    """
     xs = np.asarray(xax.values, dtype=float)
     yv = np.asarray(ys, dtype=float)
     ok = xax.valid & np.isfinite(xs) & np.isfinite(yv)
     if ok.sum() < 2:
-        return 0.0
+        return 0.0, 0.0
+
     i, j = np.flatnonzero(ok)[[0, -1]]
-    line, = ax.plot([xs[i], xs[j]], [yv[i], yv[j]], color=color, alpha=alpha)
     if xax.is_time:
         unit, per_unit = _rate_unit(xax.span_s)
         dx = xax.span_s / per_unit
+        # x is in matplotlib date numbers (days); rescale to the chosen unit so
+        # the fitted slope carries the same units as the chord.
+        xu = (xs - xs[i]) * 86400.0 / per_unit
     else:
         unit, dx = "frame", xs[j] - xs[i]
-    slope = (yv[j] - yv[i]) / dx if dx else 0.0
-    ax.legend([line], [f"Slope = {slope:.4f} px/{unit}"])
-    return slope
+        xu = xs - xs[i]
+
+    chord = (yv[j] - yv[i]) / dx if dx else 0.0
+    chord_line, = ax.plot([xs[i], xs[j]], [yv[i], yv[j]],
+                          color=color, alpha=alpha, lw=1.2)
+
+    fit = 0.0
+    handles = [chord_line]
+    labels = [f"Endpoints = {chord:.4f} px/{unit}"]
+    if ok.sum() >= 3 and np.ptp(xu[ok]) > 0:
+        fit, intercept = np.polyfit(xu[ok], yv[ok], 1)
+        fit_line, = ax.plot(xs[ok], intercept + fit * xu[ok],
+                            color="black", alpha=0.75, lw=1.2, ls="--")
+        handles.append(fit_line)
+        labels.append(f"Least squares = {fit:.4f} px/{unit}")
+
+    # Worst-case drift. Both rates above can be near zero on a run that travelled
+    # a long way and came back, so show the peak-to-peak span the dot actually
+    # covered, bracketed on the axis where it happened.
+    lo, hi = float(np.min(yv[ok])), float(np.max(yv[ok]))
+    for level in (lo, hi):
+        rng_line = ax.axhline(level, color="0.35", alpha=0.7, lw=0.9, ls=":")
+    handles.append(rng_line)
+    labels.append(f"Range = {hi - lo:.2f} px  ({lo:+.2f} to {hi:+.2f})")
+
+    ax.legend(handles, labels, fontsize="small")
+    return chord, fit
 
 
 def _plot_pair(df: pd.DataFrame, out_path: Path, cols, ylabels) -> Path:
@@ -482,10 +526,41 @@ def build_summary(
     def _first_ts(): return str(df["timestamp"].iloc[0])  if not df.empty and "timestamp" in df else ""
     def _last_ts():  return str(df["timestamp"].iloc[-1]) if not df.empty and "timestamp" in df else ""
 
+    def _excursion(col):
+        """Worst-case drift: the full peak-to-peak range, and when each end happened.
+
+        Neither drift readout on the plot sees this. The endpoint chord compares
+        two frames; least squares fits a trend. Both report allmetal's y drift as
+        a handful of px/day, while the dot actually travelled 90 px -- down 20,
+        up to +70, back again. For "how far did it ever get from where it
+        started", peak-to-peak is the number, and it is the one that matters for
+        whether the dot stayed on the detector.
+        """
+        nan = {"min": np.nan, "max": np.nan, "range": np.nan,
+               "t_min": "", "t_max": ""}
+        if df.empty:
+            return nan
+        s = np.asarray(base[col], dtype=float)
+        ok = np.isfinite(s)
+        if not ok.any():
+            return nan
+        i_lo = int(np.flatnonzero(ok)[np.nanargmin(s[ok])])
+        i_hi = int(np.flatnonzero(ok)[np.nanargmax(s[ok])])
+        ts = df["timestamp"] if "timestamp" in df else None
+        return {
+            "min": float(s[i_lo]), "max": float(s[i_hi]),
+            "range": float(s[i_hi] - s[i_lo]),
+            "t_min": str(ts.iloc[i_lo]) if ts is not None else "",
+            "t_max": str(ts.iloc[i_hi]) if ts is not None else "",
+        }
+
     mux_m,  mux_s  = _mean_std("mu_x_rel")
     muy_m,  muy_s  = _mean_std("mu_y_rel")
     fwx_m,  fwx_s  = _mean_std("fwhm_x")
     fwy_m,  fwy_s  = _mean_std("fwhm_y")
+
+    xr = _excursion("mu_x_rel")
+    yr = _excursion("mu_y_rel")
 
     return {
         "filename":         runname,
@@ -506,6 +581,16 @@ def build_summary(
         "y position (as)":  muy_m * pixel_scale,  "y pos std (as)":  muy_s * pixel_scale,
         "FWHM x (as)":      fwx_m * pixel_scale,  "FWHM x std (as)": fwx_s * pixel_scale,
         "FWHM y (as)":      fwy_m * pixel_scale,  "FWHM y std (as)": fwy_s * pixel_scale,
+        # Worst-case drift: peak-to-peak excursion, which neither the endpoint
+        # chord nor the least-squares fit reports. See _excursion().
+        "x min (px)":       xr["min"],   "x max (px)":   xr["max"],
+        "x range (px)":     xr["range"],
+        "y min (px)":       yr["min"],   "y max (px)":   yr["max"],
+        "y range (px)":     yr["range"],
+        "x range (as)":     xr["range"] * pixel_scale,
+        "y range (as)":     yr["range"] * pixel_scale,
+        "x min time":       xr["t_min"], "x max time":   xr["t_max"],
+        "y min time":       yr["t_min"], "y max time":   yr["t_max"],
     }
 
 
