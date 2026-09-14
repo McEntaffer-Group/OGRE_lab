@@ -13,6 +13,7 @@ run_key,runname,camera,image_shape,pixel_scale_arcsec_per_pixel,notes
 20250922_morning5237,morning5237,main_camera,480x640,,
 20250923_bigshakeA,bigshakeA,main_camera,480x640,,
 20250923_bigshakeB,bigshakeB,main_camera,480x640,,
+20250923_collimationtests,collimationtests,main_camera,484x648,,
 20250923_fanoff,fanoff,main_camera,480x640,,
 20250923_minutely,minutely,main_camera,480x640,,
 20250923_minutely2,minutely2,main_camera,480x640,,
