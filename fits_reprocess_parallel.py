@@ -661,7 +661,8 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
         "camera": _detect_camera(runname), "shape": "",
     }
 
-    files = sorted(glob.glob(str(fits_dir / "*.fits")))
+    files = sorted(glob.glob(str(fits_dir / "*.fits")),
+                   key=lambda p: (_extract_frame_num(p), p))
     stats["n_files"] = len(files)
     if not files:
         return stats

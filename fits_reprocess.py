@@ -622,10 +622,18 @@ def list_run_images(run_dir: Path) -> list[Path]:
     """Input frames in a BMP/PNG run folder, excluding this pipeline's own plots.
 
     Always use this instead of globbing the run directory directly — see
-    _GENERATED_PNG_RE for why."""
+    _GENERATED_PNG_RE for why.
+
+    Sorted by numeric frame number, not filename string. Frame numbers are
+    zero-padded to a fixed width only up to that width (e.g. "0001".."9999"),
+    then grow unpadded ("10000"...). A plain filename sort interleaves those
+    two widths -- "1000" < "10000".."10009" < "1001" -- which plays back as
+    the movie repeatedly snapping back to early frames throughout. Filename
+    is still the tie-break for genuine duplicate frame numbers, matching
+    _order_frames's stability guarantee for the CSV."""
     images = list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png"))
     return sorted((p for p in images if not _GENERATED_PNG_RE.search(p.name)),
-                  key=lambda p: p.name)
+                  key=lambda p: (_extract_frame_num_image(p), p.name))
 
 
 def date_prefix(run_dir: Path) -> str:
@@ -1104,7 +1112,8 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     if out_csv.exists():
         _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
-    files = sorted(glob.glob(str(fits_dir / "*.fits")))
+    files = sorted(glob.glob(str(fits_dir / "*.fits")),
+                   key=lambda p: (_extract_frame_num(p), p))
     stats["n_files"] = len(files)
     if not files:
         return stats
@@ -1325,14 +1334,43 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
             "source":    s["source"],
         })
 
-    total_files = sum(s["n_files"] for s in stats_list)
-    total_ok = sum(s["n_ok"] for s in stats_list)
-    overall_fps = total_files / max(grand_elapsed_s, 1e-9)
+    # _TOTAL_ must cover every run currently on record, not just this batch --
+    # a --run-filtered invocation only fills stats_list with the matched runs,
+    # so summing stats_list alone silently drops every historical row's
+    # contribution (see 2026-09-16 run_timings.csv regression: partial batch
+    # made totals collapse even though it added two of the largest runs on
+    # record).
+    #
+    # This file is an append-only log -- reprocessing the same run again adds
+    # another row rather than replacing the old one (20251023_nightdriftB has
+    # 5 entries as of 2026-09-16), so summing every row would multiply that
+    # run's frames/time into the total once per rerun. Dedupe to the latest
+    # entry per run first. run_key is the natural key, but rows written before
+    # that column existed are blank there; runname alone collides across
+    # dates (run_key()'s docstring: "morning5237" is six separate runs), so
+    # fall back to runname+source, which is still unique per run occurrence.
+    def _num(v, cast):
+        try:
+            return cast(v)
+        except (TypeError, ValueError):
+            return cast(0)
+
+    def _dedup_key(row):
+        return row["run_key"] or f"{row['runname']}|{row['source']}"
+
+    latest_per_run: dict[str, dict] = {}
+    for r in existing_rows + new_rows:
+        latest_per_run[_dedup_key(r)] = r  # later rows overwrite earlier ones
+
+    total_files = sum(_num(r["n_files"], int) for r in latest_per_run.values())
+    total_ok = sum(_num(r["n_ok"], int) for r in latest_per_run.values())
+    total_elapsed = sum(_num(r["elapsed_s"], float) for r in latest_per_run.values())
+    overall_fps = total_files / max(total_elapsed, 1e-9)
     total_row = {
         "batch_timestamp": batch_ts,
         "run_key": "", "runname": "_TOTAL_", "camera": "",
         "n_files": total_files, "n_ok": total_ok,
-        "elapsed_s": round(grand_elapsed_s, 2),
+        "elapsed_s": round(total_elapsed, 2),
         "fps": round(overall_fps, 1),
         "source": "",
     }
