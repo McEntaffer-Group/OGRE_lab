@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+postspie,5757,26-08-14 13-59-30,26-08-18 13-57-17,post SPIE laser off primary and secondary,0.016666666666666666,3.654820202144714,1.0783050481851262,3.98797618989343,2.7784565944068986,2.9865912973559614,0.3267506017349291,2.679710369856749,0.34559352587693776
