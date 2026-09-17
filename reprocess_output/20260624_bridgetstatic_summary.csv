@@ -1,0 +1,2 @@
+filename,total frames,good frames,start time,stop time,notes,frame interval (s),x position (px),x pos std (px),y position (px),y pos std (px),x position (as),x pos std (as),y position (as),y pos std (as),FWHM x (px),FWHM x std (px),FWHM y (px),FWHM y std (px)
+bridgetstatic,6743,6446,26-06-24 15-46-40,26-06-29 08-11-07,second primary test,60,-80.86458884291895,355.9799507425023,128.1675374250213,171.2288268148466,-12.129688326437842,53.396992611375346,19.225130613753194,25.68432402222699,14.55495583337099,4.972096451963954,17.818697839063237,8.110203992990078
