@@ -1,4 +1,183 @@
-# Pick up here — 2026-09-08
+# Pick up here — 2026-09-17
+
+Branch `claude/build-test-suite`, with `main` merged in (`1c45d92`). `main` is
+now an ancestor of this branch, so the PR `claude/build-test-suite` → `main`
+fast-forwards and cannot lose anything on `main`. **No PR has been opened yet.**
+
+## Correction: the data-loss alarm this page used to carry was wrong
+
+An earlier version of this handoff read `git diff main claude/build-test-suite`
+— 891 files, ~1.7M insertions, ~2M deletions — and concluded a PR would delete
+two months of temperature data. That is a **two-dot diff**: it renders every
+file that exists only on `main` as a deletion. It is not what a merge does.
+
+`git merge-tree --write-tree main claude/build-test-suite` showed the real
+shape: **11 conflicted paths**, and every temperature log added on either side
+after the split preserved, because none of them existed at the merge base
+(`52e9528`). Both sides' additions survive a three-way merge.
+
+If you compare two branches again, simulate the merge. Do not read a two-dot
+diff as a merge preview.
+
+## Temperature data: merged, and now actually reachable
+
+`main` did hold twenty days this branch lacked — `2026-08-28`..`2026-09-16`,
+exactly `postspiererun`'s window — but at the **repo root**, where nothing
+reads them. `plot_run_environment.TEMP_DAILY` points at `temperature/daily/`,
+and `load_environment()` resolves every run's series through it. The data was
+committed and still invisible to the pipeline.
+
+Ingested into `temperature/daily/` in `87457de`, CRLF → LF to match the archive
+(`daily/` is LF-only; the legacy `temperature/*.csv` mirrors are CRLF). Each
+file verified byte-identical to `main`'s copy modulo `\r`, and single-date.
+Root-level copies kept as well, by request.
+
+The archive now spans `2025-10-27`..`2026-09-16`, 234 files. Over the real run
+window:
+
+```
+tf.builder('2026-08-28 17:16:19','2026-09-16 11:03:40', source_dir='temperature/daily')
+→ 53,973 rows @30s, 0.0 NaN in all five series, no gap warnings
+```
+
+**`2026-08-19`..`08-27` is missing from every ref** — a collection gap, not a
+merge artifact. It falls before `postspiererun` starts, so that run is unaffected.
+
+## How the 11 conflicts were resolved
+
+All one root cause: this branch migrated `reprocess_output/` to date-prefixed
+`run_key`s; `main` still held the pre-migration copies.
+
+| conflict | resolution |
+|---|---|
+| 8× bare `postspie*`/`postspiegenie*` (modify/delete) | took this branch's deletion; all eight have `20260814_*` twins, verified present |
+| `all_runs_summary_reprocess.csv` | took this branch (95 rows vs `main`'s 2, which are covered) |
+| `run_timings.csv` | took this branch (485 rows); carried `main`'s two OneDrive rows into the 9-column schema |
+| `all_runs_summary.csv` | took this branch's 38 rows **+ `bridgetstatic` and `run2`** |
+
+`run_timings.csv`: recomputing `_TOTAL_` with the dedup from `0c28dc9` gives
+553382/553365/124807.29 — identical to the stored row — over 97 unique runs,
+matching `pixel_scales.csv`. The `2026-09-13` row already won that dedup key,
+so the carried rows are provenance only. `main`'s stale batch-local `_TOTAL_`
+row was deliberately not imported.
+
+The 163 bare-named files `main` has and this branch does not are the intentional
+cleanup from `4977958`; every one was confirmed to have a run-keyed twin before
+the merge was committed.
+
+### What is left
+
+1. Fix `_collect_summaries()` / `_collect_reprocess_summaries()` — see below.
+   Still real, still unfixed.
+2. Open the PR `claude/build-test-suite` → `main` (fast-forward).
+3. Rerun `postspiererun`/`postspiererungenie` — temperature data is now in place
+   for the full window.
+4. `__pycache__` and `.idea` are still tracked on both sides. Untrack and
+   `.gitignore` them; listed before, still outstanding.
+
+**Not verified: the test suite.** `pytest` is absent from both local venvs
+(`.venv`, `.venv12`), the D: interpreter this page documents is not on this
+machine, and neither D: nor E: is mounted.
+`test_no_ambiguous_bare_named_mirrors` — the one invariant these changes could
+plausibly break — was evaluated directly and passes. Run the full suite when
+you are next on a machine with the drives.
+
+## Code bug found but NOT fixed this session: `_collect_summaries()` /
+## `_collect_reprocess_summaries()` silently lose history
+
+In `fits_reprocess.py`, these two functions (~line 1243 and ~line 1271)
+build `all_runs_summary.csv` / `all_runs_summary_reprocess.csv` by doing a
+fresh `root.rglob(...)` sweep and overwriting the output file from scratch
+every time — unlike `write_pixel_scales()` (~line 1399), which explicitly
+merges by `run_key` and preserves every row not in the current batch.
+
+This bit hard this session: reprocessing `postspiererun`/`postspiererungenie`
+against a `--root` pointed at the OneDrive copy of the data — which has raw
+frames mirrored for all ~97 historical runs, but reprocessed *outputs*
+(`*_summary_reprocess.csv` etc.) only for the 2 runs actually reprocessed
+there — caused both collector CSVs to collapse from ~97 rows to 6. Reverted
+rather than committed; **not fixed**. Fix should mirror `write_pixel_scales`'s
+merge-by-`run_key` pattern.
+
+Also found in the same investigation: a **stale duplicate** output file at
+the pre-fix output layout, e.g.
+`{date}/{runname}/{runname}_summary_reprocess.csv` sitting alongside the
+current correct location `{date}/{runname}_summary_reprocess.csv` — both
+match the `rglob` pattern, so runs with a leftover old-layout copy get
+double-counted. The module docstring already promises a
+`--migrate-image-outputs` flag for exactly this; check whether it exists and
+actually handles it, or needs writing.
+
+**Correction:** an earlier version of this page called two untracked files
+collateral damage from this bug, with `notes` "copied from the wrong run", safe
+to delete. Both claims were wrong. Their notes — "second primary test" and
+"second secondary test" — agree exactly with `main`'s authoritative rows, and
+`main`'s rows were collected from these very files. They were the **only**
+source for the two runs `main` recorded that this branch did not:
+`bridgetstatic` and `run2`. Deleting them would have dropped both runs at merge
+time. Now tracked in `2e5966a` and folded into `all_runs_summary.csv`.
+
+`run2` is a reprocess of the same `zoeysecondarygenie` data out of the OneDrive
+folder the mirrored filename names `run2` — identical frame count and window to
+`20260420_zoeysecondarygenie`, but carrying the reprocess column family rather
+than the original one. Still worth understanding before anything derived from it
+is deleted.
+
+## What was actually fixed and verified this session (already pushed)
+
+1. **Movie frame ordering** (`list_run_images()` in `fits_reprocess.py`, and
+   the FITS `sorted(glob.glob(...))` calls in both `fits_reprocess.py` and
+   `fits_reprocess_parallel.py`). Frames were sorted by filename *string*,
+   not numeric frame number. Frame numbers zero-pad to a fixed width only up
+   to that width (`"0001".."9999"`), then grow unpadded (`"10000"...`) — a
+   string sort interleaves the two widths, which played back as the movie
+   repeatedly snapping back to early frames throughout. This is why
+   `postspiererun` (crossed 9999 frames, 4-digit padding) showed the bug and
+   `postspiererungenie` (padded to 5 digits from frame 1, never crosses a
+   width boundary within this run) didn't. Fixed to sort by numeric
+   `frame_num`, filename as tiebreak.
+2. **`run_timings.csv` `_TOTAL_` row**, fixed twice:
+   - First bug: `_TOTAL_` was computed from only the current batch's
+     `stats_list`, so a `--run`-filtered invocation (this session ran
+     `--run postspie`) silently dropped every historical run's contribution
+     from the total (503,423 → 49,959 files).
+   - Second bug (in my own first fix): switched to summing every row in the
+     file, but the dedup key (`run_key`, falling back to `runname|source`)
+     failed to unify a run's pre-`run_key`-schema log rows with its later
+     re-processed rows (same `source`, blank vs populated `run_key`) —
+     doubled the total to 1,068,408 instead of the real 553,382. Fixed by
+     recovering the run's date from `source` via regex
+     (`r"(20\d{6})"`) instead of falling back to the raw path, so legacy
+     rows collapse onto the same key a modern `run_key` would produce.
+     Verified against `pixel_scales.csv`'s 97 rows (which uses the correct
+     merge-by-key pattern already) — now matches exactly.
+3. **Verified clean on the real overnight run**: `postspiererun`
+   (26,981 frames) / `postspiererungenie` (22,978 frames) — 100% `fit_ok`,
+   zero duplicate or out-of-order `frame_num`, zero timestamp gaps, median
+   60s cadence throughout, both `.mp4`s present at expected sizes. The
+   filename-sort fix holds on a real 27k/23k-frame run.
+
+## One unanswered question from last session
+
+`postspiererungenie` has **79% of frames flagged `two_component`** (two-source
+contamination) vs **1.9%** on `postspiererun` (main camera). Asked the user
+whether a second source is expected on the genie camera for this run
+(similar sibling runs `postspie`/`postspiegenie` have notes mentioning laser
+tests) — not yet answered as of this handoff.
+
+## Where things are
+
+| file | what |
+|---|---|
+| `fits_reprocess.py` | the fit, discovery, `write_timing_summary`, `write_pixel_scales`, `_collect_summaries`/`_collect_reprocess_summaries` (the latter two need the merge-safety fix) |
+| `fits_reprocess_parallel.py` | imports all of the above; fixing one fixes both |
+| `reprocess_output/run_timings.csv` | now correct; dedup logic to reuse if a similar total needs computing elsewhere |
+| `reprocess_output/all_runs_summary.csv`, `all_runs_summary_reprocess.csv` | currently at `HEAD` (pre-this-session) state, reverted; do not regenerate against a partial `--root` until the merge fix lands |
+
+---
+
+## Older handoff (2026-09-08) — superseded above for git/branch state, items
+## below are likely still open and untouched this session
 
 Branch `claude/build-test-suite`. Working tree clean apart from `__pycache__`.
 
@@ -14,7 +193,7 @@ D:/Users/jad507/PycharmProjects/ReverseTelescopeDot/.venv/Scripts/python.exe -X 
 **`E:` IS READ-ONLY** by standing instruction — no writes, overwrites or deletes
 — *except* during an explicitly authorised reprocess.
 
-## Read in this order
+### Read in this order
 
 | doc | what it is |
 |---|---|
@@ -24,7 +203,7 @@ D:/Users/jad507/PycharmProjects/ReverseTelescopeDot/.venv/Scripts/python.exe -X 
 | `TEST_PLAN.md` §15 | the test suite's own results |
 | `FIT_DIAGNOSIS_HANDOFF.md` | the original diagnosis; **stale**, see its header |
 
-## The one thing to fix next
+### The one thing to fix next (as of 2026-09-08)
 
 **`fit_ok` no longer gates anything, and 12,107 railed frames pass it.**
 
@@ -49,7 +228,7 @@ removes today. `SNR > 5` alone accounts for 17,923 of those and is an invented
 threshold. It needs its own justification before it becomes a default — see the
 measured table in `POST_REPROCESS.md` §3.
 
-## What the reprocess showed
+### What the reprocess showed
 
 - **Railing dropped from 25 runs to 11 of 94**, 12,113 rows of 503,407 (2.41%).
   Worst: `longweekend` 69.5%, `laser` 60.0%, `minutelyovernight` 36.1%.
@@ -75,71 +254,9 @@ measured table in `POST_REPROCESS.md` §3.
   `newprimary` / `newprimaryagain` are in the same band at σ≈57 with no `genie`
   in the name — **unexplained, needs eyes on frames.**
 
-## What changed on 2026-09-07/08
+### Still open (as of 2026-09-08)
 
-### `29a2594` — run discovery
-
-`_discover_image_runs` skipped every `{date}/` that had a `{date}_data/` sibling.
-But a `_data` folder only means *some* of that date was converted to FITS. Runs
-never converted were invisible to both discovery paths.
-
-Fixed by excluding runs individually, matched case-insensitively. **95 runs now,
-up from 94** — `20250923/collimationtests` was the hidden one (16 frames). It was
-one partially-converted date away from dropping a large run.
-
-`discovery_anomalies()` now prints before every run so nothing is skipped
-silently:
-
-```
-[mismatched_fits]    20260306_data/springgenie_big   holds springgenie_fits/ (14150 .fits)
-[case_mismatch]      20250923/bigShakeB              counterpart is 'bigshakeB'
-[partial_conversion] 20260320/statictestgenie        7018 images but 5676 FITS
-[partial_conversion] 20260130/newsecondary           4143 images but 3999 FITS
-```
-
-Both partial conversions are clean truncated tails, not scattered loss. FITS is
-preferred over images of the same name, so those 1,486 tail frames are dropped —
-deliberately, and now reported.
-
-### `b5bcfaa` — time axis, and the despike
-
-**Sub-second reconstruction.** 31 of 96 runs stamp whole seconds, so a burst put
-~50 frames on one instant (99 for `nightvideo`) and plotted as a vertical stroke
-per second. `_subsecond_times()` lays each bucket out at the rate implied by the
-*interior* buckets, and lays the **first** bucket out backwards from the
-following second boundary because it is partial. 15 of 30 affected runs open with
-a bucket under half the interior rate. Verified: no frame leaves its stamped
-second, ordering preserved, and runs with too few buckets fall back to frame
-index. Slope impact is 23.5% on `maxtest2` (10 s span) and ~0.02% median.
-
-**The despike is commented out**, not deleted, with measurements in place. It
-removed 8,237 frames of which **3,033 (36.8%) were clean, high-SNR, non-railed
-fits**; the MAD fence collapses on quiet runs (`statictestgenie` lost 155 frames
-at a median deviation of **0.2 px**); and it removed frame 0 on 17 runs, shifting
-whole curves (`statictestgenie` by 105.8 px). Filtering in
-`plot_run_environment` is back to "curve_fit did not error".
-
-### `4977958` — drift reporting
-
-- **487 of 493 bare-named files deleted** from `reprocess_output/` (204 MB). All
-  predated the reprocess and shadowed the current run-keyed output. Recoverable
-  from git history. This cleared `test_no_ambiguous_bare_named_mirrors`.
-- **Both drift rates now shown.** The old "Slope" was an endpoint chord
-  `(y_last - y_first) / span` — two frames. Kept and relabelled `Endpoints`;
-  a least-squares fit is drawn alongside. On `allmetal`'s y they disagree in
-  **sign**: -4.49 vs +6.92 px/day.
-- **Worst-case drift** added to the summary: `x/y min`, `max`, `range` in px and
-  as, plus `min time` / `max time`. `allmetal` y range is **93.20 px** against
-  reported drift of a few px/day either way.
-
-**Correction worth keeping:** the endpoint chord is **not** a truth-agreement
-measure. `compare_pipelines.TRUTH_PAIRS` compares position and FWHM means and
-stds; no slope is among them. It is kept for visual comparability with the
-legacy plots, nothing more.
-
-## Still open
-
-1. **`fit_ok` should account for `on_bound`** — see the top of this file.
+1. **`fit_ok` should account for `on_bound`** — see above.
 2. **`newprimary` / `newprimaryagain`** score 25–36 on `resid/noise` with no
    `genie` in the name. Needs a look at real frames.
 3. **The last test failure**: `20260420_zoeysecondary`, `DIVERGENT_UNEXPLAINED`,
@@ -161,16 +278,3 @@ legacy plots, nothing more.
 7. **`springgenie_big`** holds 14,150 FITS, the same count as `springgenie` —
    almost certainly a duplicate, but discovery cannot tell. Renaming its
    `springgenie_fits/` to `springgenie_big_fits/` would make it process.
-
-## Where things are
-
-| file | what |
-|---|---|
-| `fits_reprocess.py` | the fit, detectors, `_CSV_COLS`, discovery, `discovery_anomalies` |
-| `fits_reprocess_parallel.py` | imports all of the above; fixing one fixes both |
-| `csv_to_dotplots.py` | production plots, `_subsecond_times`, `_slope_line`, `build_summary` |
-| `plot_run_environment.py` | environment plots; despike commented out in `load_frames` |
-| `tests/test_discovery.py` | 12 discovery tests (new) |
-| `tests/test_timeaxis.py` | 15 sub-second tests (new) |
-| `tests/test_slope.py` | 15 drift/range tests (new) |
-| `pre_reprocess_snapshot_20260904/` | the pre-fix state, with sha256 manifest |
