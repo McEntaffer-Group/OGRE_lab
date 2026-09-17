@@ -479,4 +479,8 @@ batch_timestamp,run_key,runname,camera,n_files,n_ok,elapsed_s,fps,source
 2026-09-13 02:27:13,20251112_laserdaytest,laserdaytest,main_camera,1115,1115,750.83,1.5,E:\Reverse Telescope Test Data\20251112\laserdaytest
 2026-09-13 02:27:13,20251112_lasernighttest,lasernighttest,main_camera,1130,1130,789.94,1.4,E:\Reverse Telescope Test Data\20251112\lasernighttest
 2026-09-13 02:27:13,20260216_warming,warming,main_camera,76,76,35.91,2.1,E:\Reverse Telescope Test Data\20260216\warming
-2026-09-13 02:27:13,,_TOTAL_,,503423,503406,119702.2,4.2,
+2026-09-16 13:18:21,20260828_postspiererun,postspiererun,main_camera,26981,26981,2514.37,10.7,C:\Users\jad507\OneDrive - The Pennsylvania State University\Pictures\Reverse Telescope Test\20260828\postspiererun
+2026-09-16 13:18:21,20260828_postspiererungenie,postspiererungenie,dalsa_genie,22978,22978,3087.15,7.4,C:\Users\jad507\OneDrive - The Pennsylvania State University\Pictures\Reverse Telescope Test\20260828\postspiererungenie
+2026-09-16 18:38:58,20260828_postspiererun,postspiererun,main_camera,26981,26981,2510.81,10.7,C:\Users\jad507\OneDrive - The Pennsylvania State University\Pictures\Reverse Telescope Test\20260828\postspiererun
+2026-09-16 18:38:58,20260828_postspiererungenie,postspiererungenie,dalsa_genie,22978,22978,3131.46,7.3,C:\Users\jad507\OneDrive - The Pennsylvania State University\Pictures\Reverse Telescope Test\20260828\postspiererungenie
+2026-09-16 18:38:58,,_TOTAL_,,553382,553365,124807.29,4.4,

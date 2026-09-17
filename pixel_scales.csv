@@ -94,3 +94,5 @@ run_key,runname,camera,image_shape,pixel_scale_arcsec_per_pixel,notes
 20260624_bridgetstaticgenie,bridgetstaticgenie,dalsa_genie,1216x1936,,
 20260814_postspie,postspie,main_camera,960x1280,,
 20260814_postspiegenie,postspiegenie,dalsa_genie,1216x1936,,
+20260828_postspiererun,postspiererun,main_camera,960x1280,,
+20260828_postspiererungenie,postspiererungenie,dalsa_genie,1216x1936,,

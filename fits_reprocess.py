@@ -1346,9 +1346,16 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
     # 5 entries as of 2026-09-16), so summing every row would multiply that
     # run's frames/time into the total once per rerun. Dedupe to the latest
     # entry per run first. run_key is the natural key, but rows written before
-    # that column existed are blank there; runname alone collides across
-    # dates (run_key()'s docstring: "morning5237" is six separate runs), so
-    # fall back to runname+source, which is still unique per run occurrence.
+    # that column existed are blank there. Falling back to plain runname+source
+    # was tried and is wrong: a run reprocessed both before and after run_key
+    # was added keeps the same source path in both eras, so the pre- and
+    # post-run_key rows for the SAME run land under two different fallback
+    # keys and both survive dedup -- exactly the double count this is trying
+    # to avoid (verified against the 2026-09-16 run: it inflated 553,382 real
+    # files to 1,068,408). Recover the same key those rows would have gotten
+    # by extracting the run's date from `source` -- every source path embeds
+    # an 8-digit YYYYMMDD folder regardless of which drive/root era wrote it
+    # -- so it collapses onto the real run_key format ("{date}_{runname}").
     def _num(v, cast):
         try:
             return cast(v)
@@ -1356,7 +1363,10 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
             return cast(0)
 
     def _dedup_key(row):
-        return row["run_key"] or f"{row['runname']}|{row['source']}"
+        if row["run_key"]:
+            return row["run_key"]
+        m = re.search(r"(20\d{6})", row["source"])
+        return f"{m.group(1)}_{row['runname']}" if m else f"{row['runname']}|{row['source']}"
 
     latest_per_run: dict[str, dict] = {}
     for r in existing_rows + new_rows:
