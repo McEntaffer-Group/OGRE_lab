@@ -4,8 +4,8 @@ csv_to_dotplots.py
 Consume a per-run {runname}_frames.csv produced by fits_reprocess.py and emit the
 plot + summary artifacts that dot_movie-Copy3.ipynb would have written for the same run:
 
-    {runname}_position_reprocess.png    # X and Y centroid shift over frames (with slope line)
-    {runname}_FWHM_reprocess.png        # X and Y FWHM over frames (with slope line)
+    {runname}_position_reprocess.png    # X and Y centroid shift over time (with slope line)
+    {runname}_FWHM_reprocess.png        # X and Y FWHM over time (with slope line)
     {runname}_FFT_reprocess.png         # 2x2 FFT panel: centroid X/Y, FWHM X/Y
     {runname}_summary_reprocess.csv     # one-row summary (means and stds, pixel + arcsec)
 
@@ -13,6 +13,15 @@ The `_reprocess` suffix keeps these separate from the dot_movie-Copy3 outputs so
 pipelines can coexist in the same run folder for direct side-by-side comparison. The
 movie (.mp4) is NOT produced here because it requires the underlying image data;
 fits_reprocess.py handles that.
+
+The position and FWHM plots are drawn against wall-clock time, styled after
+run_bridget_comparison.ipynb (solid major gridlines, dashed minor ones). The tick
+intervals adapt to the run's duration -- days/6 hours for a multi-day run, down to
+seconds for a high-speed burst -- so a run that collects thousands of frames in a
+couple of hours stays readable. The date is always recoverable: it is in the tick
+labels for runs of two days or more, stacked under the clock time for shorter runs
+that cross midnight, and in the x-axis label otherwise. Runs whose timestamps are
+missing or identical fall back to the old frame-number axis.
 
 Frame rate is auto-detected from the CSV timestamps when median dt >= 5 s (the
 per-minute regime); otherwise the caller's --frame-rate value is used (default 1/60,
@@ -31,17 +40,19 @@ import argparse
 import csv
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import matplotlib
 matplotlib.use("Agg")  # headless-safe; fits_reprocess runs this in worker context
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
 
 DEFAULT_PIXEL_SCALE = 0.15          # arcsec/pixel; dot_movie-Copy3.ipynb hardcoded value
 DEFAULT_FRAME_RATE  = 1.0 / 60.0    # Hz; dot_movie-Copy3.ipynb default (one frame per minute)
-DEFAULT_FWHM_MIN_PX = 1.0
+DEFAULT_FWHM_MIN_PX = .70
 DEFAULT_FWHM_MAX_PX = 1000.0
 
 # When median timestamp dt is this large, trust it as the frame period.
@@ -126,73 +137,336 @@ def estimate_frame_rate_from_timestamps(df: pd.DataFrame) -> Optional[float]:
     return 1.0 / median_dt
 
 
-def lookup_pixel_scale(runname: str, path: Path = PIXEL_SCALES_PATH) -> Optional[float]:
-    """Return the pixel scale (arcsec/px) from pixel_scales.csv, or None if empty/missing."""
+def lookup_pixel_scale(runname: str, path: Path = PIXEL_SCALES_PATH,
+                       run_key: Optional[str] = None) -> Optional[float]:
+    """Return the pixel scale (arcsec/px) from pixel_scales.csv, or None if empty/missing.
+
+    Run names repeat across dates, so prefer an exact run_key ('{date}_{runname}')
+    match when the caller knows it. Falls back to the first row matching the bare
+    runname, which is all that pre-run_key files and standalone CLI use can offer."""
     if not path.exists():
         return None
     try:
         with open(path, newline="") as f:
-            for row in csv.DictReader(f):
-                if row.get("runname") != runname:
-                    continue
-                v = (row.get("pixel_scale_arcsec_per_pixel") or "").strip()
-                if not v:
-                    return None
-                return float(v)
+            rows = list(csv.DictReader(f))
     except Exception:
         return None
-    return None
+
+    match = None
+    if run_key:
+        match = next((r for r in rows if r.get("run_key") == run_key), None)
+    if match is None:
+        match = next((r for r in rows if r.get("runname") == runname), None)
+    if match is None:
+        return None
+
+    v = (match.get("pixel_scale_arcsec_per_pixel") or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Plots
 # ---------------------------------------------------------------------------
 
-def _slope_line(ax, xs, ys, color: str, alpha: float = 0.5):
-    line, = ax.plot([xs[0], xs[-1]], [ys[0], ys[-1]], color=color, alpha=alpha)
-    slope = (ys[-1] - ys[0]) / (xs[-1] - xs[0]) if (xs[-1] - xs[0]) else 0.0
-    ax.legend([line], [f"Slope = {slope:.4f} px/frame"])
-    return slope
+# The x-axis is wall-clock time, styled after run_bridget_comparison.ipynb: solid
+# major gridlines, dashed minor ones. Which interval each gets is picked from the
+# run's duration, because runs range from a couple of seconds of high-speed frames
+# to nearly two weeks of once-a-minute frames. Tiers are (min span in seconds,
+# major locator, minor locator, tick format), tried longest-first, and each locator
+# comes from a factory because a Locator instance cannot be shared across axes.
+#
+# Sub-day locators pass an explicit by* list rather than interval=N: interval
+# anchors the ticks on the first frame's clock time (a run starting at 13:51 would
+# be gridded at 14:13, 14:43, ...), while a by* list pins them to round clock
+# values, which is what makes two runs comparable side by side.
+_HOURS = lambda step: list(range(0, 24, step))
+_SIXTY = lambda step: list(range(0, 60, step))
+
+_TIME_TIERS = [
+    (8 * 86400, lambda: mdates.DayLocator(interval=2),
+                lambda: mdates.DayLocator(),                        "%b %d"),
+    (2 * 86400, lambda: mdates.DayLocator(),
+                lambda: mdates.HourLocator(byhour=_HOURS(6)),       "%b %d"),
+    (12 * 3600, lambda: mdates.HourLocator(byhour=_HOURS(6)),
+                lambda: mdates.HourLocator(byhour=_HOURS(1)),       "%H:%M"),
+    (4 * 3600,  lambda: mdates.HourLocator(byhour=_HOURS(1)),
+                lambda: mdates.MinuteLocator(byminute=_SIXTY(15)),  "%H:%M"),
+    (2 * 3600,  lambda: mdates.MinuteLocator(byminute=_SIXTY(30)),
+                lambda: mdates.MinuteLocator(byminute=_SIXTY(10)),  "%H:%M"),
+    (3600,      lambda: mdates.MinuteLocator(byminute=_SIXTY(15)),
+                lambda: mdates.MinuteLocator(byminute=_SIXTY(5)),   "%H:%M"),
+    (20 * 60,   lambda: mdates.MinuteLocator(byminute=_SIXTY(5)),
+                lambda: mdates.MinuteLocator(byminute=_SIXTY(1)),   "%H:%M"),
+    (8 * 60,    lambda: mdates.MinuteLocator(byminute=_SIXTY(2)),
+                lambda: mdates.SecondLocator(bysecond=_SIXTY(30)),  "%H:%M"),
+    (3 * 60,    lambda: mdates.MinuteLocator(byminute=_SIXTY(1)),
+                lambda: mdates.SecondLocator(bysecond=_SIXTY(15)),  "%H:%M"),
+    (90,        lambda: mdates.SecondLocator(bysecond=_SIXTY(30)),
+                lambda: mdates.SecondLocator(bysecond=_SIXTY(10)),  "%H:%M:%S"),
+    (40,        lambda: mdates.SecondLocator(bysecond=_SIXTY(15)),
+                lambda: mdates.SecondLocator(bysecond=_SIXTY(5)),   "%H:%M:%S"),
+    (15,        lambda: mdates.SecondLocator(bysecond=_SIXTY(5)),
+                lambda: mdates.SecondLocator(bysecond=_SIXTY(1)),   "%H:%M:%S"),
+    # Sub-15s bursts need sub-second ticks; None picks the millisecond formatter.
+    (0,         lambda: mdates.AutoDateLocator(minticks=3, maxticks=7),
+                lambda: mdates.AutoDateLocator(minticks=6, maxticks=15), None),
+]
+
+# At or above this span the tick format already carries the date.
+DATE_IN_TICKS_MIN_SPAN_S = 2 * 86400
+
+
+class _XAxis(NamedTuple):
+    """Resolved x-axis for one run's plots."""
+    values: np.ndarray   # matplotlib date numbers when is_time, else frame indices
+    is_time: bool
+    span_s: float        # first -> last, in seconds (0.0 when not is_time)
+    t0: Optional[pd.Timestamp]
+    t1: Optional[pd.Timestamp]
+    valid: np.ndarray    # bool mask of rows with a usable x value
+
+
+MIN_BUCKETS_FOR_SUBSECOND = 3   # interior buckets needed to estimate a rate
+
+
+def _subsecond_times(ts: pd.Series) -> Optional[pd.Series]:
+    """Spread frames sharing a whole-second timestamp across that second.
+
+    The filenames stamp whole seconds, so a high-cadence burst puts ~50 frames on
+    one instant: 31 of 96 runs carry more than two frames per timestamp, up to 99
+    for nightvideo. Plotted as a line that draws a vertical stroke per second
+    (see maxtest2_position_reprocess.png), and any px/s slope is fitted against a
+    1 Hz clock.
+
+    Frames are placed at the rate implied by the INTERIOR buckets, which are the
+    only ones known to be complete. The first and last buckets are partial --
+    capture began and ended part-way through a second -- and they sit at the two
+    points with the most leverage on a slope fit, so spreading them across a full
+    second they never occupied is the specific way this goes wrong. 15 of 30
+    affected runs open with a bucket under half the interior rate (stability
+    starts with 4 frames where its neighbours hold 51).
+
+    So: every bucket is laid out forwards from its own second, except the first,
+    which is laid out backwards from the following second boundary. When the
+    first bucket is in fact full the two agree, so the rule has no seam.
+
+    Returns None when the rate is not determined, leaving the caller to fall back
+    to frame index rather than invent one.
+    """
+    counts = ts.value_counts().sort_index()
+    if len(counts) < MIN_BUCKETS_FOR_SUBSECOND + 2:
+        return None
+    rate = float(np.median(counts.iloc[1:-1].to_numpy()))
+    if not np.isfinite(rate) or rate < 2:
+        return None
+
+    i = ts.groupby(ts).cumcount().to_numpy(dtype=np.float64)   # position in bucket
+    k = ts.map(counts).to_numpy(dtype=np.float64)              # bucket size
+    # A bucket holding more frames than the estimated rate would otherwise spill
+    # past its own second; the stamped second is the one thing we actually know.
+    r = np.maximum(rate, k)
+
+    off = i / r
+    # The first bucket is partial -- capture began mid-second -- so lay it out
+    # backwards from the following boundary instead of forwards from this one.
+    first = (ts == counts.index[0]).to_numpy()
+    off[first] = 1.0 - (k[first] - i[first]) / r[first]
+
+    delta = pd.to_timedelta(np.round(off * 1e6), unit="us")
+    return (ts.dt.floor("s") + delta).astype(ts.dtype)
+
+
+def _resolve_x(df: pd.DataFrame) -> _XAxis:
+    """Plot against timestamps when they exist and actually advance, else frame index.
+
+    Falling back matters for runs whose frames all share one timestamp -- the
+    high-speed BMP runs stamp whole seconds, so a two-second burst can have every
+    frame at the same instant -- and for CSVs with no timestamp column at all.
+
+    When timestamps advance but do not resolve individual frames, the seconds are
+    subdivided by _subsecond_times() rather than left stacked."""
+    n = len(df)
+    if "timestamp" in df.columns and n >= 2:
+        ts = df["timestamp"]
+        valid = ts.notna().to_numpy()
+        if valid.sum() >= 2:
+            tv = ts[valid]
+            t0, t1 = tv.iloc[0], tv.iloc[-1]
+            span = float((t1 - t0).total_seconds())
+            if span > 0:
+                if tv.nunique() < 0.5 * len(tv):
+                    spread = _subsecond_times(tv)
+                    if spread is not None:
+                        ts = ts.copy()
+                        ts.loc[spread.index] = spread
+                        t0, t1 = ts[valid].min(), ts[valid].max()
+                        span = float((t1 - t0).total_seconds())
+                    else:
+                        # Rate undetermined: frame index beats a fabricated clock.
+                        return _XAxis(np.arange(n), False, 0.0, None, None,
+                                      np.ones(n, dtype=bool))
+                # NaT rows become NaN date numbers, which matplotlib draws as gaps.
+                return _XAxis(mdates.date2num(ts), True, span, t0, t1, valid)
+    return _XAxis(np.arange(n), False, 0.0, None, None, np.ones(n, dtype=bool))
+
+
+def _rate_unit(span_s: float):
+    """Pick the denominator for the slope readout: (label, seconds per unit)."""
+    if span_s >= 2 * 86400:
+        return "day", 86400.0
+    if span_s >= 3600:
+        return "hr", 3600.0
+    if span_s >= 60:
+        return "min", 60.0
+    return "s", 1.0
+
+
+def _date_span_label(t0: pd.Timestamp, t1: pd.Timestamp) -> str:
+    if t0.date() == t1.date():
+        return t0.strftime("%b %d, %Y")
+    if t0.year == t1.year:
+        return f"{t0.strftime('%b %d')}–{t1.strftime('%b %d, %Y')}"
+    return f"{t0.strftime('%b %d, %Y')}–{t1.strftime('%b %d, %Y')}"
+
+
+def _ticks_carry_date(xax: _XAxis) -> bool:
+    """True when the major tick labels name the date themselves.
+
+    Long runs get date-formatted ticks outright. Shorter ones get clock-only ticks,
+    which repeat once the run crosses midnight ("17:00" twice in a 40-hour run), so
+    those get the date stacked under the time instead."""
+    return (xax.span_s >= DATE_IN_TICKS_MIN_SPAN_S
+            or xax.t0.date() != xax.t1.date())
+
+
+def _style_axis(ax, xax: _XAxis) -> None:
+    """Apply the locators, formatter, and two-level grid for this run's x-axis."""
+    if not xax.is_time:
+        ax.grid(True)
+        return
+    major, minor, fmt = next(t[1:] for t in _TIME_TIERS if xax.span_s >= t[0])
+    major_loc = major()
+    ax.xaxis.set_major_locator(major_loc)
+    if fmt is None:
+        # AutoDateFormatter would print six decimal places and drop the hour.
+        ax.xaxis.set_major_formatter(FuncFormatter(
+            lambda x, _pos: mdates.num2date(x).strftime("%H:%M:%S.%f")[:-3]))
+    else:
+        if xax.span_s < DATE_IN_TICKS_MIN_SPAN_S and _ticks_carry_date(xax):
+            fmt += "\n%b %d"
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt))
+    ax.xaxis.set_minor_locator(minor())
+    ax.grid(which="major", linestyle="-", alpha=0.5)
+    ax.grid(which="minor", linestyle="--", alpha=0.25)
+
+
+def _finish_x_axis(fig, bottom_ax, xax: _XAxis) -> None:
+    """Label the shared x-axis and rotate its ticks."""
+    if not xax.is_time:
+        bottom_ax.set_xlabel("Frame")
+        return
+    # Ticks that show clock time only get the run's date named here instead.
+    label = ("Time" if _ticks_carry_date(xax)
+             else f"Time — {_date_span_label(xax.t0, xax.t1)}")
+    bottom_ax.set_xlabel(label)
+    fig.autofmt_xdate(rotation=45, ha="right")
+
+
+def _slope_line(ax, xax: _XAxis, ys, color: str, alpha: float = 0.5):
+    """Draw two drift lines: the legacy endpoint chord and a least-squares fit.
+
+    The chord is `(y_last - y_first) / span` -- what dot_movie-Copy3 computes at
+    its line 564 and rvts.py at 235. It is kept so the legacy plots stay directly
+    comparable by eye, NOT because anything tests it: compare_pipelines.TRUTH_PAIRS
+    checks position and FWHM means and stds, and no slope is among them.
+
+    It is kept despite describing the data badly. It consults exactly two frames,
+    so it reports allmetal's y drift as -4.49 px/day for a run that climbs 70 px,
+    holds for a day and a half, and comes back. A single bad endpoint sets the
+    whole number, and frame 0 can be a blank-frame fit sitting on its lower bound.
+
+    The least-squares fit uses every frame, so it describes the trend the plot
+    actually shows. Both are drawn and labelled; neither is derived from the
+    other, and they disagree exactly when the run is not monotonic.
+
+    Returns (chord, fit) in px per time unit.
+    """
+    xs = np.asarray(xax.values, dtype=float)
+    yv = np.asarray(ys, dtype=float)
+    ok = xax.valid & np.isfinite(xs) & np.isfinite(yv)
+    if ok.sum() < 2:
+        return 0.0, 0.0
+
+    i, j = np.flatnonzero(ok)[[0, -1]]
+    if xax.is_time:
+        unit, per_unit = _rate_unit(xax.span_s)
+        dx = xax.span_s / per_unit
+        # x is in matplotlib date numbers (days); rescale to the chosen unit so
+        # the fitted slope carries the same units as the chord.
+        xu = (xs - xs[i]) * 86400.0 / per_unit
+    else:
+        unit, dx = "frame", xs[j] - xs[i]
+        xu = xs - xs[i]
+
+    chord = (yv[j] - yv[i]) / dx if dx else 0.0
+    chord_line, = ax.plot([xs[i], xs[j]], [yv[i], yv[j]],
+                          color=color, alpha=alpha, lw=1.2)
+
+    fit = 0.0
+    handles = [chord_line]
+    labels = [f"Endpoints = {chord:.4f} px/{unit}"]
+    if ok.sum() >= 3 and np.ptp(xu[ok]) > 0:
+        fit, intercept = np.polyfit(xu[ok], yv[ok], 1)
+        fit_line, = ax.plot(xs[ok], intercept + fit * xu[ok],
+                            color="black", alpha=0.75, lw=1.2, ls="--")
+        handles.append(fit_line)
+        labels.append(f"Least squares = {fit:.4f} px/{unit}")
+
+    # Worst-case drift. Both rates above can be near zero on a run that travelled
+    # a long way and came back, so show the peak-to-peak span the dot actually
+    # covered, bracketed on the axis where it happened.
+    lo, hi = float(np.min(yv[ok])), float(np.max(yv[ok]))
+    for level in (lo, hi):
+        rng_line = ax.axhline(level, color="0.35", alpha=0.7, lw=0.9, ls=":")
+    handles.append(rng_line)
+    labels.append(f"Range = {hi - lo:.2f} px  ({lo:+.2f} to {hi:+.2f})")
+
+    ax.legend(handles, labels, fontsize="small")
+    return chord, fit
+
+
+def _plot_pair(df: pd.DataFrame, out_path: Path, cols, ylabels) -> Path:
+    """Two stacked panels sharing a time x-axis, each with its own slope chord."""
+    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
+    xax = _resolve_x(df)
+    for ax, col, ylabel, color in zip(axs, cols, ylabels, ("blue", "green")):
+        if len(df):
+            ax.plot(xax.values, df[col], color=color)
+            _slope_line(ax, xax, df[col].to_numpy(), "red")
+        ax.set_ylabel(ylabel)
+        _style_axis(ax, xax)
+    _finish_x_axis(fig, axs[1], xax)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
 
 
 def plot_position(df: pd.DataFrame, out_path: Path) -> Path:
-    """X and Y centroid shift over frames with slope line — matches dot_movie-Copy3."""
-    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    frames = np.arange(len(df))
-    if len(df):
-        axs[0].plot(frames, df["mu_x_rel"], color="blue")
-        _slope_line(axs[0], frames, df["mu_x_rel"].to_numpy(), "red")
-        axs[1].plot(frames, df["mu_y_rel"], color="green")
-        _slope_line(axs[1], frames, df["mu_y_rel"].to_numpy(), "red")
-    axs[0].set_ylabel("X centroid shift (pixels)")
-    axs[0].grid(True)
-    axs[1].set_xlabel("Frame")
-    axs[1].set_ylabel("Y centroid shift (pixels)")
-    axs[1].grid(True)
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return out_path
+    """X and Y centroid shift over time with slope line."""
+    return _plot_pair(df, out_path, ("mu_x_rel", "mu_y_rel"),
+                      ("X centroid shift (pixels)", "Y centroid shift (pixels)"))
 
 
 def plot_fwhm(df: pd.DataFrame, out_path: Path) -> Path:
-    """X and Y FWHM over frames with slope line — matches dot_movie-Copy3."""
-    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    frames = np.arange(len(df))
-    if len(df):
-        axs[0].plot(frames, df["fwhm_x"], color="blue")
-        _slope_line(axs[0], frames, df["fwhm_x"].to_numpy(), "red")
-        axs[1].plot(frames, df["fwhm_y"], color="green")
-        _slope_line(axs[1], frames, df["fwhm_y"].to_numpy(), "red")
-    axs[0].set_ylabel("FWHM X (pixels)")
-    axs[0].grid(True)
-    axs[1].set_xlabel("Frame")
-    axs[1].set_ylabel("FWHM Y (pixels)")
-    axs[1].grid(True)
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return out_path
+    """X and Y FWHM over time with slope line."""
+    return _plot_pair(df, out_path, ("fwhm_x", "fwhm_y"),
+                      ("FWHM X (pixels)", "FWHM Y (pixels)"))
 
 
 def _fft_power(signal: np.ndarray, dt: float):
@@ -252,10 +526,41 @@ def build_summary(
     def _first_ts(): return str(df["timestamp"].iloc[0])  if not df.empty and "timestamp" in df else ""
     def _last_ts():  return str(df["timestamp"].iloc[-1]) if not df.empty and "timestamp" in df else ""
 
+    def _excursion(col):
+        """Worst-case drift: the full peak-to-peak range, and when each end happened.
+
+        Neither drift readout on the plot sees this. The endpoint chord compares
+        two frames; least squares fits a trend. Both report allmetal's y drift as
+        a handful of px/day, while the dot actually travelled 90 px -- down 20,
+        up to +70, back again. For "how far did it ever get from where it
+        started", peak-to-peak is the number, and it is the one that matters for
+        whether the dot stayed on the detector.
+        """
+        nan = {"min": np.nan, "max": np.nan, "range": np.nan,
+               "t_min": "", "t_max": ""}
+        if df.empty:
+            return nan
+        s = np.asarray(base[col], dtype=float)
+        ok = np.isfinite(s)
+        if not ok.any():
+            return nan
+        i_lo = int(np.flatnonzero(ok)[np.nanargmin(s[ok])])
+        i_hi = int(np.flatnonzero(ok)[np.nanargmax(s[ok])])
+        ts = df["timestamp"] if "timestamp" in df else None
+        return {
+            "min": float(s[i_lo]), "max": float(s[i_hi]),
+            "range": float(s[i_hi] - s[i_lo]),
+            "t_min": str(ts.iloc[i_lo]) if ts is not None else "",
+            "t_max": str(ts.iloc[i_hi]) if ts is not None else "",
+        }
+
     mux_m,  mux_s  = _mean_std("mu_x_rel")
     muy_m,  muy_s  = _mean_std("mu_y_rel")
     fwx_m,  fwx_s  = _mean_std("fwhm_x")
     fwy_m,  fwy_s  = _mean_std("fwhm_y")
+
+    xr = _excursion("mu_x_rel")
+    yr = _excursion("mu_y_rel")
 
     return {
         "filename":         runname,
@@ -276,6 +581,16 @@ def build_summary(
         "y position (as)":  muy_m * pixel_scale,  "y pos std (as)":  muy_s * pixel_scale,
         "FWHM x (as)":      fwx_m * pixel_scale,  "FWHM x std (as)": fwx_s * pixel_scale,
         "FWHM y (as)":      fwy_m * pixel_scale,  "FWHM y std (as)": fwy_s * pixel_scale,
+        # Worst-case drift: peak-to-peak excursion, which neither the endpoint
+        # chord nor the least-squares fit reports. See _excursion().
+        "x min (px)":       xr["min"],   "x max (px)":   xr["max"],
+        "x range (px)":     xr["range"],
+        "y min (px)":       yr["min"],   "y max (px)":   yr["max"],
+        "y range (px)":     yr["range"],
+        "x range (as)":     xr["range"] * pixel_scale,
+        "y range (as)":     yr["range"] * pixel_scale,
+        "x min time":       xr["t_min"], "x max time":   xr["t_max"],
+        "y min time":       yr["t_min"], "y max time":   yr["t_max"],
     }
 
 
@@ -302,6 +617,7 @@ def run(
     fwhm_max: float = DEFAULT_FWHM_MAX_PX,
     notes: str = "",
     require_fit_ok: bool = True,
+    run_key: Optional[str] = None,
 ) -> dict:
     """Produce plots + summary for one _frames.csv. Returns a dict of output paths."""
     csv_path = Path(csv_path)
@@ -319,7 +635,7 @@ def run(
     df = compute_derived(df)
 
     if pixel_scale is None:
-        looked_up = lookup_pixel_scale(runname)
+        looked_up = lookup_pixel_scale(runname, run_key=run_key)
         pixel_scale = looked_up if looked_up is not None else DEFAULT_PIXEL_SCALE
 
     if frame_rate is None:

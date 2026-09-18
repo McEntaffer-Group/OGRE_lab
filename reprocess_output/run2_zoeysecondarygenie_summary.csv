@@ -1,0 +1,2 @@
+filename,total frames,good frames,start time,stop time,notes,frame interval (s),x position (px),x pos std (px),y position (px),y pos std (px),x position (as),x pos std (as),y position (as),y pos std (as),FWHM x (px),FWHM x std (px),FWHM y (px),FWHM y std (px)
+zoeysecondarygenie,10131,10131,26-04-20 15-16-01,26-04-27 14-23-04,second secondary test,60,2.0899260690215096,1.689281498054832,-31.558153371094754,17.2117338712045,0.3134889103532264,0.2533922247082248,-4.733723005664213,2.581760080680675,185.87604410862917,8.796797674552785,217.425841357249,10.954160138782663

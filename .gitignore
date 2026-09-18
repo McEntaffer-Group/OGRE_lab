@@ -1,3 +1,6 @@
 /fft_output/*
 .idea
 .idea/*
+__pycache__/
+*.py[cod]
+.pytest_cache/

@@ -1,0 +1,31 @@
+batch_timestamp,run_key,runname,camera,n_files,n_ok,elapsed_s,fps,source
+2026-08-23 15:39:32,,fanoff,main_camera,9252,9249,2435.85,3.8,E:\Reverse Telescope Test Data\20250918\fanoff
+2026-08-23 15:39:32,,fanoff,main_camera,9355,9355,3039.33,3.1,E:\Reverse Telescope Test Data\20250923_data\fanoff\fanoff_fits
+2026-08-23 15:39:32,,fanoff5237,main_camera,9333,9330,2276.22,4.1,E:\Reverse Telescope Test Data\20250925\fanoff5237
+2026-08-23 15:39:32,,fanoff5237,main_camera,9132,9129,3125.67,2.9,E:\Reverse Telescope Test Data\20250926\fanoff5237
+2026-08-23 15:39:32,,fanoff5237,main_camera,8799,8799,3317.84,2.7,E:\Reverse Telescope Test Data\20250929_data\fanoff5237\fanoff5237_fits
+2026-08-23 15:39:32,,laserdaytest,main_camera,205,205,46.01,4.5,E:\Reverse Telescope Test Data\20251107_data\laserdaytest\laserdaytest_fits
+2026-08-23 15:39:32,,laserdaytest,main_camera,1118,1115,732.09,1.5,E:\Reverse Telescope Test Data\20251112\laserdaytest
+2026-08-23 15:39:32,,minutely,main_camera,288,288,95.5,3.0,E:\Reverse Telescope Test Data\20250922_data\minutely\minutely_fits
+2026-08-23 15:39:32,,minutely,main_camera,195,195,82.58,2.4,E:\Reverse Telescope Test Data\20250923_data\minutely\minutely_fits
+2026-08-23 15:39:32,,minutely,main_camera,1147,1144,299.01,3.8,E:\Reverse Telescope Test Data\20250925\minutely
+2026-08-23 15:39:32,,minutely,main_camera,201,198,81.97,2.5,E:\Reverse Telescope Test Data\20250926\minutely
+2026-08-23 15:39:32,,minutely,main_camera,1133,1130,143.03,7.9,E:\Reverse Telescope Test Data\20251016\minutely
+2026-08-23 15:39:32,,minutely,main_camera,2181,2178,261.19,8.4,E:\Reverse Telescope Test Data\20251017\minutely
+2026-08-23 15:39:32,,minutely,main_camera,1563,1560,193.83,8.1,E:\Reverse Telescope Test Data\20251020\minutely
+2026-08-23 15:39:32,,morning5237,main_camera,9445,9445,2229.24,4.2,E:\Reverse Telescope Test Data\20250922_data\morning5237\morning5237_fits
+2026-08-23 15:39:32,,morning5237,main_camera,9179,9176,3301.43,2.8,E:\Reverse Telescope Test Data\20250926\morning5237
+2026-08-23 15:39:32,,morning5237,main_camera,8458,8458,3200.96,2.6,E:\Reverse Telescope Test Data\20250929_data\morning5237\morning5237_fits
+2026-08-23 15:39:32,,morning5237,main_camera,6086,6083,675.36,9.0,E:\Reverse Telescope Test Data\20251017\morning5237
+2026-08-23 15:39:32,,morning5237,main_camera,4136,4133,1636.53,2.5,E:\Reverse Telescope Test Data\20251020\morning5237
+2026-08-23 15:39:32,,morning5237,main_camera,6426,6423,774.58,8.3,E:\Reverse Telescope Test Data\20251022\morning5237
+2026-08-23 15:39:32,,noon5237,main_camera,9396,9393,2435.81,3.9,E:\Reverse Telescope Test Data\20250925\noon5237
+2026-08-23 15:39:32,,noon5237,main_camera,8367,8364,955.44,8.8,E:\Reverse Telescope Test Data\20251023\noon5237
+2026-08-23 15:39:32,,overnight,main_camera,1099,1099,143.67,7.6,E:\Reverse Telescope Test Data\20251027_data\overnight\overnight_fits
+2026-08-23 15:39:32,,overnight,main_camera,1090,353,956.13,1.1,E:\Reverse Telescope Test Data\20251105_data\overnight\overnight_fits
+2026-08-18,,postspie,main_camera,5757,5757,423.15,13.6,E:\Reverse Telescope Test Data\20260814\postspie
+2026-08-23 15:39:32,,postspie,main_camera,5757,5757,1192.31,4.8,E:\Reverse Telescope Test Data\20260814_data\postspie\postspie_fits
+2026-08-18,,postspiegenie,dalsa_genie,5742,5742,82.35,69.7,E:\Reverse Telescope Test Data\20260814\postspiegenie
+2026-08-23 15:39:32,,postspiegenie,dalsa_genie,5742,5742,1788.77,3.2,E:\Reverse Telescope Test Data\20260814_data\postspiegenie\postspiegenie_fits
+2026-08-23 15:39:32,,warming,main_camera,5191,5191,2739.23,1.9,E:\Reverse Telescope Test Data\20251217_data\warming\warming_fits
+2026-08-23 15:39:32,,warming,main_camera,79,66,52.27,1.5,E:\Reverse Telescope Test Data\20260216\warming

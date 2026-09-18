@@ -1,0 +1,2 @@
+filename,number of frames,start time,stop time,notes,frame rate,x position,x position std,y position,y position std,FWHM x,FWHM x std,FWHM y,FWHM y std
+genieshots,2550,26-03-02 17-17-24,26-03-04 11-55-32,attempt to use a laser on the secondary picked up by a genie to determine secondary only drift,0.016666666666666666,2.3019620880585667,0.6385092022490173,30.54409268179648,9.054322857157269,64.28087030387476,1.1507770353104962,88.55983195532501,8.597482655947358

@@ -97,7 +97,8 @@ from fits_reprocess import (
     _fill_fit_results, _empty_row,
     _extract_timestamp, _extract_frame_num,
     _extract_timestamp_image, _extract_frame_num_image,
-    _detect_camera, _write_frames_csv, _mirror,
+    _detect_camera, _write_frames_csv, _mirror_for_run, _order_frames,
+    list_run_images, run_key, output_dir_for,
     _discover_fits_runs, _discover_image_runs,
     _collect_summaries, _collect_reprocess_summaries,
     write_timing_summary, write_pixel_scales,
@@ -207,8 +208,8 @@ class _StreamingMovie:
         ax_x.set_ylabel("counts")
         ax_y.set_xlabel("counts")
         ax_x.grid(True); ax_y.grid(True)
-        ax_x.set_ylim(stats["px_min"] - 200, stats["px_max"] - 200)
-        ax_y.set_xlim(stats["py_min"] - 200, stats["py_max"])
+        ax_x.set_ylim(stats["px_min"], stats["px_max"])
+        ax_y.set_xlim(stats["py_min"], stats["py_max"])
         ts_text = ax_img.text(0.02, 0.98, "", transform=ax_img.transAxes,
                               color="white", fontsize=12,
                               verticalalignment="top",
@@ -432,7 +433,7 @@ def _shmem_run(
     import tempfile
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     n_files = len(files)
     if n_files == 0:
@@ -457,7 +458,7 @@ def _shmem_run(
     if make_movie:
         try:
             movie = _StreamingMovie(files, loader_frame,
-                                    run_dir / f"{runname}_reprocess.mp4",
+                                    out_csv.parent / f"{runname}_reprocess.mp4",
                                     fps=video_fps)
             print(f"    movie writer ready (nvenc={movie._nvenc_active}, "
                   f"fps={video_fps}, stride={video_stride})")
@@ -524,15 +525,14 @@ def _shmem_run(
         except Exception as exc:
             print(f"    !! could not remove shmem temp file {tmp_path}: {exc}")
 
-    df = (pd.DataFrame([r for r in results if r is not None])
-            .sort_values("frame_num").reset_index(drop=True))
+    df = _order_frames(pd.DataFrame([r for r in results if r is not None]))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_csv.parent, run_dir, runname)
 
     return stats
 
@@ -559,7 +559,7 @@ def _stream_run(
     """Shared streaming pipeline used by both FITS and IMAGE processing."""
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     n_files = len(files)
     if n_files == 0:
@@ -569,7 +569,7 @@ def _stream_run(
     if make_movie:
         try:
             movie = _StreamingMovie(files, loader_frame,
-                                    run_dir / f"{runname}_reprocess.mp4",
+                                    out_csv.parent / f"{runname}_reprocess.mp4",
                                     fps=video_fps)
             print(f"    movie writer ready (nvenc={movie._nvenc_active}, "
                   f"fps={video_fps}, stride={video_stride})")
@@ -627,15 +627,14 @@ def _stream_run(
         if movie is not None:
             movie.close()
 
-    df = (pd.DataFrame([r for r in results if r is not None])
-            .sort_values("frame_num").reset_index(drop=True))
+    df = _order_frames(pd.DataFrame([r for r in results if r is not None]))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_csv.parent, run_dir, runname)
 
     return stats
 
@@ -652,15 +651,18 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
                      seconds_per_day=None) -> dict:
     runname = run_dir.name
     fits_dir = run_dir / f"{runname}_fits"
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=False)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(fits_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(fits_dir), "out_csv": str(out_csv),
         "n_files": 0, "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
 
-    files = sorted(glob.glob(str(fits_dir / "*.fits")))
+    files = sorted(glob.glob(str(fits_dir / "*.fits")),
+                   key=lambda p: (_extract_frame_num(p), p))
     stats["n_files"] = len(files)
     if not files:
         return stats
@@ -710,14 +712,13 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                       video_fps: int = DEFAULT_VIDEO_FPS,
                       seconds_per_day=None) -> dict:
     runname = run_dir.name
-    images = sorted(
-        list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png")),
-        key=lambda p: p.name,
-    )
-    out_csv = run_dir / f"{runname}_frames.csv"
+    images = list_run_images(run_dir)
+    out_dir = output_dir_for(run_dir, is_image_run=True)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(run_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(run_dir), "out_csv": str(out_csv),
         "n_files": len(images), "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
@@ -819,6 +820,7 @@ def main(argv: list[str] | None = None) -> int:
 
     total = len(fits_runs) + len(image_runs)
     print(f"Discovered {len(fits_runs)} FITS run(s) and {len(image_runs)} image run(s) under {root}.")
+    fr.print_discovery_anomalies(root)
 
     if args.dry_run:
         for r in fits_runs:

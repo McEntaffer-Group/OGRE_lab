@@ -1,0 +1,169 @@
+Subject: Reprocessing pipeline - validated against the notebooks, two bugs fixed, one open question
+
+
+Hi all,
+
+Update on the FITS reprocessing work. Short version: the parallel pipeline is
+about 4x faster than the notebook pipeline, it agrees with the notebooks
+wherever the two are actually doing the same thing, I found and fixed two bugs
+in it, and I turned up one open question about pixel scale that I think matters
+more than any of the rest.
+
+
+WHERE THINGS STAND
+
+fits_reprocess_parallel.py has processed the full archive: 94 runs, ~503k
+frames, about 46 hours wall time. I also wrote a diagnostic script
+(compare_pipelines.py) that checks its output against the bmp_to_fits.ipynb ->
+dot_movie-Copy3.ipynb pipeline we're treating as truth, classifies every fit
+failure by cause, and compares wall times.
+
+
+SPEED
+
+Better than I expected. On postspie/postspiegenie, where I have timings for
+both pipelines on the same data:
+
+    notebook pipeline    210 min
+    parallel pipeline     50 min      (4.2x faster)
+
+The interesting part is where the time goes. In the notebook run the actual
+curve fitting is under 2 minutes; the animation is 155 of the 210 minutes. The
+speedup comes almost entirely from streaming frames to ffmpeg during the fit
+instead of doing a second serial pass.
+
+So matplotlib is still roughly 75% of the parallel runtime - we just overlap it
+now instead of paying for it twice. If we want another big multiple, the movie
+path is the target, not the fitting.
+
+
+AGREEMENT WITH THE NOTEBOOK PIPELINE
+
+28 runs have results from both pipelines:
+
+    17  match to within 0.1% on all eight summary statistics
+     2  agree to better than 0.25%
+     3  differ because of the quality-cut mismatch below
+     6  differ because of frames one side dropped and the other kept
+     0  unexplained
+
+That last line is the one I care about: I can now account for every
+disagreement, and none of them points at the fitting itself being different.
+
+Two causes, both worth a group decision:
+
+1. We use different quality cuts. dot_movie-Copy3 filters FWHM < 500 px;
+   fits_reprocess uses < 1000 px. 27 runs keep frames the notebook would have
+   thrown out.
+
+2. This matters more than the frame counts suggest, because both pipelines
+   report position relative to the FIRST SURVIVING FRAME. If a cut removes
+   frame 0, every position in the run shifts by a constant. postspiegenie
+   differs by 28% in y position because of exactly one dropped frame.
+
+I'd like us to agree on one FWHM cut, and I'd suggest baselining position on
+the median frame rather than the first, so a single dropped frame can't move
+everything. Both change published numbers, so I don't want to just pick.
+
+
+FIT FAILURES
+
+18,309 of 417,700 frames, 4.4%. The useful finding: curve_fit never failed to
+converge. Not once. Every single "failure" is a fit that converged onto the
+background instead of the dot, ran up against the width limit, and then got
+rejected by the FWHM cut. So this is not a fitting-robustness problem - it's
+frames where the dot isn't findable.
+
+Worst runs:
+    bridgetstatic   96%   effectively no usable data
+    newsecondary    72%
+    overnight       68%
+    fansoff         55%
+    longweekend     49%
+    laserweekend    25%
+    allmetal        17%
+
+allmetal is the cleanest example and probably the best place to start: the X
+fit is fine at 8-13 px while the Y fit pegs at the maximum allowed width, so
+there's simply no findable dot in the Y profile. I haven't yet worked out why
+for any of these.
+
+
+TWO BUGS, BOTH FIXED
+
+1. The pipeline was reading its own output. Image runs are found by globbing
+   *.png in the run folder - which is also where the plots get written - so any
+   second pass ingested its own three plot PNGs as extra "frames." 31 runs had
+   picked these up. Harmless to the numbers, but it corrupted frame counts.
+
+2. Output files were keyed on run name alone, so runs sharing a name
+   overwrote each other. Ten names cover thirty runs - "morning5237" alone is
+   six separate runs on six different dates, "minutely" is seven. Everything is
+   now keyed on date + run name; duplicate keys in the combined summary went
+   from 18 to zero. Nothing was lost - the per-run copies on the E: drive were
+   never affected - but the combined summary had only ever seen the last run of
+   each name.
+
+I also made output locations consistent. dot_movie writes a run's plots and
+summary next to the data folder rather than inside it; FITS runs already
+matched that, but image runs were dropping outputs in among the .bmp files.
+They now go one level up, which also structurally prevents bug 1 from
+recurring. There's a --migrate-image-outputs sweep for the old layout; I've
+already run it (240 files across 40 runs).
+
+
+THE OPEN QUESTION - PIXEL SCALE
+
+This is the one I'd most like input on, because I think it may affect
+conclusions we've already drawn.
+
+pixel_scales.csv is empty for all 76 runs, so everything falls back to a
+hardcoded 0.15 arcsec/px - inherited from dot_movie-Copy3, which multiplies by
+0.15 with no explanation I can find.
+
+But the main camera data spans eight different image shapes, from 480x640 up
+to 1944x2592:
+
+    480x640    36 runs        1216x1936    2 runs
+    1920x2560  16 runs        1944x2592    2 runs
+    1024x1280   6 runs        1200x1600    1 run
+    1080x1920   5 runs        960x1280     1 run
+
+If those reflect binning or ROI changes on the same sensor, then the real
+arcsec-per-pixel differs by up to a factor of four between runs, and every
+arcsec value we've quoted is wrong for most of them - which would mean FWHM and
+position in arcsec are not comparable across runs at all.
+
+Does anyone know where 0.15 came from, and whether it was ever meant to apply
+to more than one configuration? Unlike the FWHM cut, this isn't a matter of
+preference - there's a right answer, and I'd rather find it before committing
+another 46 hours of reprocessing.
+
+Related: two runs tagged main_camera have exactly the dalsa_genie sensor shape
+(1216x1936). Camera is currently inferred from whether the run name contains
+"genie", so either those are mislabeled or they used different optics.
+
+
+NEXT
+
+  - Track down the pixel scale question above (my top priority)
+  - Agree on one FWHM cut and one position baseline
+  - Work out why the dot is unfindable in the seven bad runs, starting with
+    allmetal
+  - Re-run the archive once those are settled, so we only pay the 46 hours once
+  - Look at replacing the matplotlib movie path, since it's most of the
+    remaining runtime
+  - Identify which runs have both a laser splotch and an LED dot. The
+    peak-count data gets partway there but flags every Genie run, so it still
+    needs an eyeball pass; bridgetstatic and longweekend are the clear
+    candidates
+
+One housekeeping item for the group: the repo has picked up about 1.8 GB of
+tracked data files, mostly temperature logs, and the git history is around
+370 MB because a growing log file got re-committed as it grew. It's causing
+disk pressure on the temperature Pi. I can stop tracking new data easily
+enough, but actually shrinking the history means rewriting it, which would
+break everyone's existing clone. Worth five minutes on a call before I touch
+anything.
+
+Happy to walk through any of this.

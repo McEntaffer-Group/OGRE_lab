@@ -10,7 +10,27 @@ For each run, write {runname}_frames.csv with per-frame dot data:
     frame_num, filename, timestamp,
     mu_x, mu_y, sigma_x, sigma_y, fwhm_x, fwhm_y,
     amp_x, amp_y, offset_x, offset_y,
-    fit_ok, n_peaks_x, n_peaks_y
+    fit_ok, n_peaks_x, n_peaks_y,
+    nx, ny, resid_x, resid_y, on_bound_x, on_bound_y,
+    noise_x, noise_y, two_component, two_comp_sep
+
+fit_ok is a RANGE GATE, not a convergence flag: it is true when both FWHMs land
+inside (FWHM_MIN_PX, FWHM_MAX_PX) and both centroids are finite. A fit that
+converged cleanly to a genuinely broad spot is fit_ok=False; a fit that railed
+onto a bound inside the gate is fit_ok=True. The columns that mean the other
+two things:
+    converged   -> mu_x / mu_y are non-NaN
+    hit a wall  -> on_bound_x / on_bound_y
+    fit quality -> resid_x / resid_y (RMS residual, same counts as the data)
+    model right -> resid_x / noise_x. ~1.0 means the residual IS the noise and
+                   there is nothing left to explain. ~5 is two-dot
+                   contamination; 20-60 means a single Gaussian does not
+                   describe the data (a truncated or skewed source). This is
+                   the only scale-free one -- resid alone cannot be compared
+                   between runs whose sources differ 200x in brightness.
+    two sources -> two_component / two_comp_sep. Blind to overlapping or
+                   mid-crossing pairs by construction (it requires separation);
+                   resid/noise covers that case instead.
 
 All spatial values are in PIXELS. No arcsec conversion happens here; downstream code
 looks up per-run pixel scale in pixel_scales.csv when needed.
@@ -21,12 +41,19 @@ Behavior:
   * Results written to original location AND mirrored to reprocess_output/ for easy review.
   * After the CSV is written, csv_to_dotplots.py runs on it (unless --no-plots),
     producing {runname}_{position,FWHM,FFT}_reprocess.png and
-    {runname}_summary_reprocess.csv in the run folder (mirrored to reprocess_output/).
+    {runname}_summary_reprocess.csv (mirrored to reprocess_output/).
     The `_reprocess` suffix lets these coexist with the dot_movie-Copy3.ipynb outputs
     for side-by-side comparison; no existing files are overwritten.
-  * A movie is written to {run_dir}/{runname}_reprocess.mp4 (unless --no-movie).
+  * A movie is written alongside them as {runname}_reprocess.mp4 (unless --no-movie).
     Frames are streamed lazily so runs of any size fit in memory. Movies are NOT
     mirrored to reprocess_output/ (they can be large).
+  * OUTPUT LOCATION follows dot_movie-Copy3: artifacts sit one level above the
+    frames, never inside the folder holding them (see output_dir_for).
+      FITS  {date}_data/{runname}/       <- outputs, beside {runname}_fits/
+      IMAGE {date}/                      <- outputs, beside {runname}/
+    Keeping them out of the scanned folder is also what stops a re-run from
+    reading its own plots back as input frames. Image runs written under the
+    older layout can be swept up with --migrate-image-outputs.
   * All *_summary.csv truth files under ROOT are concatenated into
     reprocess_output/all_runs_summary.csv (read-only pass, originals untouched).
     All *_summary_reprocess.csv from this pipeline go into all_runs_summary_reprocess.csv.
@@ -45,6 +72,8 @@ Run from the repo root:
     python fits_reprocess.py --no-movie            # skip .mp4 generation
     python fits_reprocess.py --no-plots            # skip plots + summary CSV
     python fits_reprocess.py --dry-run             # list work, don't process
+    python fits_reprocess.py --migrate-image-outputs          # preview the sweep
+    python fits_reprocess.py --migrate-image-outputs --apply  # perform it
 """
 
 from __future__ import annotations
@@ -67,6 +96,7 @@ import pandas as pd
 from astropy.io import fits
 from PIL import Image
 from scipy.optimize import curve_fit
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
 
 # csv_to_dotplots lives alongside this file; import lazily-safe (no side effects at import).
@@ -80,14 +110,25 @@ WORKERS = max(1, (os.cpu_count() or 16) - 2)
 
 MOVIE_FPS = 20
 MOVIE_IMSHOW_VMIN = 0
-# Percentile used to auto-set the movie's imshow vmax from a sample of frames.
-MOVIE_IMSHOW_VMAX_PERCENTILE = 99.5
+# Frames are 8-bit greyscale (0-255) end to end, so the color scale is fixed
+# to the full native range instead of being guessed from a percentile sample
+# -- a percentile gets fooled whenever the bright spot is a small fraction of
+# the frame (it ends up measuring background, not signal).
+# The original dot_movie-Copy3.ipynb used a hardcoded vmax=100 with no
+# explanation; best guess is that early runs drove the LED at low voltage, so
+# the camera never approached saturation and 100 happened to sit above the
+# real peak -- fine for those runs, but not a real ceiling for this data.
+MOVIE_IMSHOW_VMAX = 255
 # Number of frames sampled up-front to derive vmax + profile-axis limits without
 # holding the whole run in memory.
 MOVIE_SAMPLE_FRAMES = 10
 # Ask ffmpeg for the NVIDIA hardware H.264 encoder; falls back to libx264
 # automatically if the encoder isn't available or the call fails.
 MOVIE_USE_NVENC = True
+
+# Wide compared with a ~5px dot, narrow compared with a ~390px laser blob.
+# Calibrated on 20260105/postwinterbreak.
+BOXCAR_PX = 41
 
 PEAK_HEIGHT_FRAC = 0.50
 PEAK_MIN_DISTANCE_PX = 50
@@ -111,11 +152,34 @@ _IMG_FRAMENUM_RE = re.compile(
     r"_?(\d{3,6})\s+\d{2}-\d{2}-\d{2}\s+\d{2}-\d{2}-\d{2}\.(?:bmp|png)$", re.IGNORECASE)
 _DIGITS_RE = re.compile(r"(\d+)")
 
+# Plots written INTO the run directory, next to the data. Image runs are
+# discovered by globbing *.png there, so without this filter a second pass over
+# the same run ingests its own plots as three extra "frames".
+#   *_reprocess.png  - csv_to_dotplots (this pipeline)
+#   bare *.png       - dot_movie-Copy3.ipynb, same three plots without the suffix
+# Only image runs have ever had the reprocess variants, but dot_movie writes to
+# the run directory too, so both are excluded.
+#
+# This is deliberately a denylist of known generated names rather than an
+# allowlist of camera-frame names: 13,872 real frames (e.g.
+# "1-833-stability3054.bmp") carry no timestamp and would be silently dropped by
+# a pattern match on the usual "name#### YY-MM-DD HH-MM-SS" convention.
+_GENERATED_PNG_RE = re.compile(
+    r"_(?:FFT|FWHM|position)(?:_reprocess)?\.png$", re.IGNORECASE)
+
 _CSV_COLS = [
     "frame_num", "filename", "timestamp",
     "mu_x", "mu_y", "sigma_x", "sigma_y", "fwhm_x", "fwhm_y",
     "amp_x", "amp_y", "offset_x", "offset_y",
     "fit_ok", "n_peaks_x", "n_peaks_y",
+    # Evidence for the fit, not just its answer. All four are byproducts of
+    # fitting -- nx/ny size the bounds, resid scores the fit -- and can only be
+    # produced during a fit, so they cannot be backfilled onto old CSVs.
+    "nx", "ny", "resid_x", "resid_y", "on_bound_x", "on_bound_y",
+    # resid/noise is the scale-free goodness of fit: ~1.0 when the single
+    # Gaussian model is right, ~5 for two-dot contamination, 20-60 when the
+    # model does not describe the data at all.
+    "noise_x", "noise_y", "two_component", "two_comp_sep",
 ]
 
 
@@ -133,46 +197,268 @@ def gaussian(x, amp, mu, sigma, offset):
 
 
 def _estimate_sigma(profile: np.ndarray, x: np.ndarray, mu_guess: float) -> float:
-    """Estimate sigma via weighted second moment of background-subtracted profile."""
-    baseline = np.median(profile)
-    shifted = np.clip(profile - baseline, 0.0, None)
-    total = float(shifted.sum())
-    if total <= 0.0:
-        return 50.0
-    weights = shifted / total
-    var = float(np.sum(weights * (x - mu_guess) ** 2))
-    return float(np.clip(np.sqrt(max(var, 1.0)), 2.0, profile.size / 4.0))
+    """Estimate sigma by measuring the peak's width at half maximum.
+
+    The previous implementation took the second moment of the whole profile
+    after subtracting only the median. That does not measure the spot: clipping
+    at zero *rectifies* the background noise, so roughly half the samples
+    survive as positive weight spread across the full frame, and because the
+    second moment weights by distance squared, that background dominates
+    completely. On real data it returned the profile.size/4 clip ceiling on
+    essentially every frame -- 256 for a 1024px profile whose true sigma was
+    ~4.3 -- which then seeded curve_fit two orders of magnitude off and drove
+    the fit onto its bounds.
+
+    Measuring the contiguous run above half maximum instead is local to the
+    peak, so background noise cannot contribute. Cutting at half max rather
+    than at the median is what makes FWHM_FACTOR the correct divisor.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    shifted = profile - float(np.median(profile))
+    peak = float(shifted.max())
+    if not np.isfinite(peak) or peak <= 0.0:
+        return float(np.clip(2.0, 1.0, max(profile.size / 4.0, 1.0)))
+
+    half = 0.5 * peak
+    i0 = int(shifted.argmax())
+    lo = i0
+    while lo > 0 and shifted[lo - 1] > half:
+        lo -= 1
+    hi = i0
+    while hi < shifted.size - 1 and shifted[hi + 1] > half:
+        hi += 1
+
+    est = float(hi - lo + 1) / FWHM_FACTOR
+    return float(np.clip(est, 1.0, max(profile.size / 4.0, 1.0)))
 
 
-def _fit_one_profile(profile: np.ndarray):
-    """Fit a single Gaussian to a 1D profile. Returns (amp, mu, sigma, offset) or NaNs."""
+def _profile_bounds(size: int):
+    """curve_fit bounds for a profile of this length: ([amp, mu, sigma, offset])."""
+    return (
+        [0.0, 0.0, 0.70, -np.inf],
+        [np.inf, float(size), size / 2.0, np.inf],
+    )
+
+
+def on_bound(size: int, mu: float, sigma: float,
+             tol_mu: float = 1e-3, tol_sigma: float = 1e-6) -> bool:
+    """True if the fit came to rest against one of its own bounds.
+
+    This, not a large sigma, is the reliable failure signature. Several runs
+    have genuinely broad spots -- sigma ~160 with amp near offset and mu
+    nowhere near an edge -- and those are real data, not bad fits. A parameter
+    pinned to the edge of the box it was allowed to search is unambiguous: the
+    optimiser wanted to keep going and could not.
+
+    A declined fit (NaN) is not a railed fit; it reports False.
+    """
+    if not (np.isfinite(mu) and np.isfinite(sigma)):
+        return False
+    return bool(
+        mu < tol_mu
+        or mu > size - tol_mu
+        or sigma < 1.0 + tol_sigma
+        or sigma > size / 2.0 - tol_sigma
+    )
+
+
+def _fit_profile(profile: np.ndarray) -> dict:
+    """Fit a single Gaussian to a 1D profile.
+
+    Returns a dict with amp/mu/sigma/offset plus the evidence needed to judge
+    the fit later: `resid` (RMS residual) and `on_bound`. Those two are
+    computed here anyway -- the residual to score seeds, the bounds to build
+    the fit -- and were previously discarded, which is why diagnosing a bad fit
+    meant re-running the fit by hand.
+
+    Two things were wrong here originally and are worth stating explicitly:
+
+    1. `p0_amp` was `profile.max()`, but `gaussian` defines amp as height ABOVE
+       offset. The starting model therefore predicted roughly twice the data's
+       peak (21955 + 21029 against 21955 on a measured frame). It must be the
+       height above the baseline.
+
+    2. The retry ladder `break`-ed on the first seed that did not raise, which
+       accepts an answer rather than choosing one. On real frames the first
+       seed converged to a railed fit with RMS residual 93.6 while later seeds
+       reached 61.2 and were never tried.
+
+    Fixing (1) and the estimator turned out to make the ladder nearly dead
+    weight: across all 234 committed fixture profiles, all three seeds land in
+    the same basin, the largest mu disagreement between them is 0.002 px, and
+    no seed ever fails. So this now takes the fast path -- one fit from the
+    measured estimate -- and only re-seeds when that result is actually
+    suspect (declined, or resting on a bound). The alternates cost ~2x when
+    they run, and on the fixtures they never need to.
+
+    `on_bound` is recorded per frame, so how often the fallback is needed is
+    now measurable from the CSVs instead of guessed at. If it never fires
+    across a full reprocess, the fallback can go.
+    """
+    out = {"amp": np.nan, "mu": np.nan, "sigma": np.nan, "offset": np.nan,
+           "resid": np.nan, "on_bound": False, "n_seeds": 0}
     try:
+        profile = np.asarray(profile, dtype=np.float64)
+        if profile.size < 3 or not np.all(np.isfinite(profile)):
+            return out
+
         x = np.arange(profile.size, dtype=np.float64)
         mu_guess = float(profile.argmax())
         sigma_est = _estimate_sigma(profile, x, mu_guess)
-        bounds = (
-            [0.0, 0.0, 1.0, -np.inf],
-            [np.inf, float(profile.size), profile.size / 2.0, np.inf],
-        )
-        p0_amp = float(profile.max())
-        p0_off = float(np.median(profile))
-        popt = None
-        for s in [sigma_est, sigma_est / 2.0, sigma_est * 2.0, 10.0, 50.0, 100.0]:
+        offset_guess = float(np.median(profile))
+        amp_guess = float(profile.max()) - offset_guess
+
+        size = profile.size
+        sigma_hi = size / 2.0
+        bounds = _profile_bounds(size)
+
+        def attempt(s):
+            s = float(np.clip(s, 1.0, np.nextafter(sigma_hi, 0.0)))
             try:
                 popt, _ = curve_fit(
                     gaussian, x, profile,
-                    p0=[p0_amp, mu_guess, s, p0_off],
+                    p0=[amp_guess, mu_guess, s, offset_guess],
                     bounds=bounds, maxfev=5000,
                 )
-                break
             except Exception:
-                continue
-        if popt is None:
-            return np.nan, np.nan, np.nan, np.nan
-        amp, mu, sigma, offset = popt
-        return amp, mu, abs(sigma), offset
+                return None, np.inf
+            resid = float(np.sqrt(np.mean((gaussian(x, *popt) - profile) ** 2)))
+            return popt, resid
+
+        best, best_resid = attempt(sigma_est)
+        n_seeds = 1
+        # Only pay for alternates when the fast path is not trustworthy.
+        if best is None or on_bound(size, best[1], abs(best[2])):
+            for s in (sigma_est * 2.0, sigma_est * 0.5):
+                popt, resid = attempt(s)
+                n_seeds += 1
+                if popt is not None and resid < best_resid:
+                    best, best_resid = popt, resid
+
+        out["n_seeds"] = n_seeds
+        if best is None:
+            return out
+        amp, mu, sigma, offset = best
+        sigma = abs(sigma)
+        out.update({"amp": amp, "mu": mu, "sigma": sigma, "offset": offset,
+                    "resid": best_resid, "on_bound": on_bound(size, mu, sigma)})
+        return out
     except Exception:
-        return np.nan, np.nan, np.nan, np.nan
+        return out
+
+
+def _fit_one_profile(profile: np.ndarray):
+    """Fit a single Gaussian. Returns (amp, mu, sigma, offset) or NaNs.
+
+    Thin wrapper over `_fit_profile` for callers that only want the four
+    parameters.
+    """
+    r = _fit_profile(profile)
+    return r["amp"], r["mu"], r["sigma"], r["offset"]
+
+
+def _mad(values: np.ndarray) -> float:
+    """Median absolute deviation, scaled to compare with a standard deviation."""
+    v = np.asarray(values, dtype=np.float64)
+    if v.size == 0:
+        return float("nan")
+    return float(1.4826 * np.median(np.abs(v - np.median(v))))
+
+
+def wing_noise(profile: np.ndarray, amp, mu, sigma, offset,
+               out_sigmas: float = 3.0, min_samples: int = 30) -> float:
+    """Noise level measured where the fit says there is no source.
+
+    `resid` alone cannot be compared between runs: springgenie's source is
+    ~200x brighter than a real dot, so its residual is large in counts while
+    being small relative to its own amplitude. Dividing resid by THIS gives a
+    scale-free goodness of fit that reads ~1.0 when the model is right:
+
+        allmetal / springbreak (single dot)   resid/noise = 1.0 - 1.2
+        postwinterbreak (two dots)                          5.5 - 6.4
+        springgenie (truncated skewed laser)                 19 - 57
+
+    NaN means there was no usable background left to measure -- the source
+    fills the frame -- which is itself a diagnosis, not a missing value.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    if not (np.isfinite(mu) and np.isfinite(sigma)) or sigma <= 0:
+        return float("nan")
+    x = np.arange(profile.size, dtype=np.float64)
+    resid = profile - gaussian(x, amp, mu, sigma, offset)
+    wing = np.abs(x - mu) > out_sigmas * sigma
+    if int(wing.sum()) < min_samples:
+        return float("nan")
+    return _mad(resid[wing])
+
+
+def _compact_peak(profile: np.ndarray, popt, boxcar: int = BOXCAR_PX):
+    """Locate the narrowest strong feature the Gaussian fit did not explain.
+
+    High-passing the residual (subtracting a boxcar of itself) suppresses the
+    broad model mismatch that otherwise swamps a plain residual test. On
+    postwinterbreak that mismatch has MAD ~250 counts against a ~600 count dot,
+    so a plain residual scores the real dot at 0.6 sigma; after high-passing it
+    scores 8-17 sigma and lands within 1px of the true 2D dot position.
+
+    The first and last `boxcar` samples are excluded: a boxcar has no valid
+    output there, and in practice that artifact produced spurious peaks at
+    index 30-36 on several runs.
+    """
+    profile = np.asarray(profile, dtype=np.float64)
+    amp, mu, sigma, offset = popt
+    if not (np.isfinite(mu) and np.isfinite(sigma)):
+        return -1, float("nan")
+    x = np.arange(profile.size, dtype=np.float64)
+    resid = profile - gaussian(x, amp, mu, sigma, offset)
+    hp = resid - uniform_filter1d(resid, boxcar, mode="nearest")
+    noise = _mad(hp)
+    margin = min(boxcar, max(1, profile.size // 4))
+    interior = hp[margin:profile.size - margin]
+    if interior.size == 0 or not np.isfinite(noise) or noise <= 0:
+        return -1, float("nan")
+    i = int(np.argmax(interior)) + margin
+    return i, float(hp[i] / noise)
+
+
+def second_component(px, py, popt_x, popt_y, min_sigma: float = 5.0,
+                     min_sep_sigmas: float = 2.0, min_sep_frac: float = 0.05):
+    """Detect a fit that has locked onto the wrong one of two sources.
+
+    Separation, not significance, is the discriminator. Measured on real frames:
+
+        allmetal         4.3 sigma but   1.3 px separation -> single dot
+        frosty           5.5 sigma and 508 px separation   -> two dots
+        postwinterbreak 18.8 sigma and 375 px separation   -> two dots
+
+    Two floors are needed and neither alone works: a multiple of sigma alone
+    false-positives on narrow dots with slightly non-Gaussian cores, while a
+    threshold loose enough to suppress those would reject postwinterbreak,
+    whose real dot sits only 2.4 sigma from the blob.
+
+    KNOWN BLIND SPOT: because it requires separation above a floor, this cannot
+    see two sources that overlap or are mid-crossing. `resid`/`wing_noise` can
+    -- overlapping sources still inflate the residual -- so the two columns are
+    complementary and neither replaces the other.
+
+    Returns (ix, iy, separation_px, significance) or None.
+    """
+    ix, sx = _compact_peak(px, popt_x)
+    iy, sy = _compact_peak(py, popt_y)
+    if not (np.isfinite(sx) or np.isfinite(sy)):
+        return None
+    sig = float(np.nanmax([sx, sy]))
+    if not np.isfinite(sig) or sig < min_sigma:
+        return None
+    mu_x, mu_y = popt_x[1], popt_y[1]
+    if not (np.isfinite(mu_x) and np.isfinite(mu_y)):
+        return None
+    scale = max(popt_x[2], popt_y[2])
+    if not np.isfinite(scale) or scale <= 0:
+        return None
+    sep = float(np.hypot(mu_x - ix, mu_y - iy))
+    floor = max(min_sep_sigmas * scale, min_sep_frac * max(px.size, py.size))
+    return (ix, iy, sep, sig) if sep > floor else None
 
 
 def _count_peaks(profile: np.ndarray) -> int:
@@ -195,20 +481,46 @@ def _empty_row(filename: str, frame_num: int, timestamp: str) -> dict:
         "amp_x": np.nan, "amp_y": np.nan,
         "offset_x": np.nan, "offset_y": np.nan,
         "fit_ok": False, "n_peaks_x": 0, "n_peaks_y": 0,
+        "nx": 0, "ny": 0,
+        "resid_x": np.nan, "resid_y": np.nan,
+        "on_bound_x": False, "on_bound_y": False,
+        "noise_x": np.nan, "noise_y": np.nan,
+        "two_component": False, "two_comp_sep": np.nan,
     }
 
 
 def _fill_fit_results(out: dict, px_profile: np.ndarray, py_profile: np.ndarray) -> dict:
-    amp_x, mu_x, sigma_x, offset_x = _fit_one_profile(px_profile)
-    amp_y, mu_y, sigma_y, offset_y = _fit_one_profile(py_profile)
+    fx = _fit_profile(px_profile)
+    fy = _fit_profile(py_profile)
+    mu_x, sigma_x = fx["mu"], fx["sigma"]
+    mu_y, sigma_y = fy["mu"], fy["sigma"]
     out.update({
         "mu_x": mu_x, "mu_y": mu_y,
         "sigma_x": sigma_x, "sigma_y": sigma_y,
-        "amp_x": amp_x, "amp_y": amp_y,
-        "offset_x": offset_x, "offset_y": offset_y,
+        "amp_x": fx["amp"], "amp_y": fy["amp"],
+        "offset_x": fx["offset"], "offset_y": fy["offset"],
         "n_peaks_x": _count_peaks(px_profile),
         "n_peaks_y": _count_peaks(py_profile),
+        # nx/ny are the profile lengths, i.e. the image width and height. Every
+        # bound in the fit derives from them, so without these a railed fit is
+        # not detectable from the CSV alone -- it has to be inferred from the
+        # largest value observed, which is fragile.
+        "nx": int(np.asarray(px_profile).size),
+        "ny": int(np.asarray(py_profile).size),
+        "resid_x": fx["resid"], "resid_y": fy["resid"],
+        "on_bound_x": fx["on_bound"], "on_bound_y": fy["on_bound"],
+        "noise_x": wing_noise(px_profile, fx["amp"], mu_x, sigma_x, fx["offset"]),
+        "noise_y": wing_noise(py_profile, fy["amp"], mu_y, sigma_y, fy["offset"]),
     })
+    popt_x = (fx["amp"], mu_x, sigma_x, fx["offset"])
+    popt_y = (fy["amp"], mu_y, sigma_y, fy["offset"])
+    hit = second_component(np.asarray(px_profile, dtype=np.float64),
+                           np.asarray(py_profile, dtype=np.float64),
+                           popt_x, popt_y)
+    # The separation is recorded, not just the verdict, so the floors can be
+    # retuned from the CSVs without another reprocess.
+    out["two_component"] = hit is not None
+    out["two_comp_sep"] = float(hit[2]) if hit is not None else np.nan
     if np.isfinite(sigma_x) and np.isfinite(sigma_y):
         fwhm_x = sigma_x * FWHM_FACTOR
         fwhm_y = sigma_y * FWHM_FACTOR
@@ -250,7 +562,10 @@ def fit_frame_image(path: Path, frame_num: int) -> dict:
             ts = ""
     out = _empty_row(filename=path.name, frame_num=frame_num, timestamp=ts)
     try:
-        img = np.array(Image.open(path).convert("L"), dtype=np.float64)
+        # Same 180 deg flip the FITS path applies (see fit_frame). PIL returns a
+        # top-down array and the converters write it into FITS verbatim, so the
+        # BMP/PNG array is identical to the FITS one and needs identical handling.
+        img = np.flip(np.array(Image.open(path).convert("L")), axis=(0, 1)).astype(np.float64)
         px_profile = np.sum(img, axis=0)
         py_profile = np.sum(img, axis=1)
     except Exception:
@@ -303,9 +618,71 @@ def _detect_camera(runname: str) -> str:
     return "dalsa_genie" if "genie" in runname.lower() else "main_camera"
 
 
+def list_run_images(run_dir: Path) -> list[Path]:
+    """Input frames in a BMP/PNG run folder, excluding this pipeline's own plots.
+
+    Always use this instead of globbing the run directory directly — see
+    _GENERATED_PNG_RE for why.
+
+    Sorted by numeric frame number, not filename string. Frame numbers are
+    zero-padded to a fixed width only up to that width (e.g. "0001".."9999"),
+    then grow unpadded ("10000"...). A plain filename sort interleaves those
+    two widths -- "1000" < "10000".."10009" < "1001" -- which plays back as
+    the movie repeatedly snapping back to early frames throughout. Filename
+    is still the tie-break for genuine duplicate frame numbers, matching
+    _order_frames's stability guarantee for the CSV."""
+    images = list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png"))
+    return sorted((p for p in images if not _GENERATED_PNG_RE.search(p.name)),
+                  key=lambda p: (_extract_frame_num_image(p), p.name))
+
+
+def date_prefix(run_dir: Path) -> str:
+    """The {date} folder a run lives under: '20250922_data/foo' -> '20250922'."""
+    date = run_dir.parent.name
+    return date[: -len("_data")] if date.endswith("_data") else date
+
+
+def output_dir_for(run_dir: Path, is_image_run: bool) -> Path:
+    """Where a run's artifacts (CSV, plots, summary, movie) are written.
+
+    Follows dot_movie-Copy3's convention: outputs sit one level above the frames,
+    never inside the folder holding them. A FITS run keeps its data in
+    {runname}_fits/, so its outputs belong in the run dir -- which is where
+    dot_movie already puts {runname}_position.png and {runname}_summary.csv. An
+    image run keeps frames in the run dir itself, so its outputs go up into the
+    {date}/ folder rather than being mixed in with the camera data.
+
+    Keeping outputs out of the scanned folder is also what stops a re-run from
+    reading its own plots back as input frames."""
+    return run_dir.parent if is_image_run else run_dir
+
+
+def run_key(run_dir: Path) -> str:
+    """Unique id for a run: '{date}_{runname}'.
+
+    Run names repeat across dates -- 'morning5237' is six separate runs, and
+    'minutely' is seven. Mirrored artifacts and pixel_scales rows are keyed on
+    this rather than the bare runname, so a later run cannot silently overwrite
+    an earlier one that happens to share its name."""
+    return f"{date_prefix(run_dir)}_{run_dir.name}"
+
+
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
+
+def _order_frames(df: pd.DataFrame) -> pd.DataFrame:
+    """Order rows by frame number, preserving discovery order among ties.
+
+    The stable sort is required, not cosmetic. Frame numbers are not unique in
+    31 of ~78 runs: 22 have three rows at frame_num=-1 (older passes that
+    ingested their own plot PNGs, before _GENERATED_PNG_RE) and about 9 have
+    genuine duplicates among real frames. pandas defaults to quicksort, which is
+    unstable, so those ties would land in arbitrary order -- and csv_to_dotplots
+    baselines positions on the first surviving frame, so a reordering at the
+    front shifts every position in the run by a constant."""
+    return df.sort_values("frame_num", kind="stable").reset_index(drop=True)
+
 
 def _write_frames_csv(df: pd.DataFrame, path: Path) -> None:
     df[_CSV_COLS].to_csv(path, index=False)
@@ -316,24 +693,35 @@ def _mirror(src: Path, dest_name: str) -> None:
     shutil.copy2(src, OUTPUT_DIR / dest_name)
 
 
+def _mirror_for_run(src: Path, run_dir: Path, suffix: str | None = None) -> None:
+    """Mirror a run artifact into OUTPUT_DIR, date-prefixed so same-named runs
+    on different dates do not overwrite each other.
+
+    '{runname}_frames.csv' -> '{date}_{runname}_frames.csv'. Pass suffix to
+    rename the tail, e.g. suffix='_frames_prev.csv'."""
+    name = f"{run_dir.name}{suffix}" if suffix else src.name
+    _mirror(src, f"{date_prefix(run_dir)}_{name}")
+
+
 # ---------------------------------------------------------------------------
 # Post-CSV artifacts: plots (via csv_to_dotplots) and movie
 # ---------------------------------------------------------------------------
 
-def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> None:
+def _generate_plots_and_summary(out_csv: Path, out_dir: Path, run_dir: Path,
+                                runname: str) -> None:
     """Run csv_to_dotplots on out_csv and mirror the artifacts to OUTPUT_DIR.
 
     Failures are logged but non-fatal — a broken plot pass should not lose the
     frames CSV that was just written."""
     try:
-        result = csv_to_dotplots.run(out_csv, out_dir=run_dir)
+        result = csv_to_dotplots.run(out_csv, out_dir=out_dir, run_key=run_key(run_dir))
     except Exception as exc:
         print(f"    !! csv_to_dotplots failed for {runname}: {exc}")
         return
     for key in ("position_png", "fwhm_png", "fft_png", "summary_csv"):
         src = Path(result[key])
         try:
-            _mirror(src, src.name)
+            _mirror_for_run(src, run_dir)
         except Exception as exc:
             print(f"    !! could not mirror {src.name}: {exc}")
     print(f"    plots: {result['n_kept']}/{result['n_total']} frames kept "
@@ -342,12 +730,12 @@ def _generate_plots_and_summary(out_csv: Path, run_dir: Path, runname: str) -> N
 
 
 def _sample_movie_stats(loader, paths, n_sample: int = MOVIE_SAMPLE_FRAMES) -> dict:
-    """Sample a few frames spread across the run to derive vmax and profile-axis
-    limits without holding the whole run in memory. Mirrors dot_movie-Copy3's
-    quirky use of max-of-mins for profile minima (larger of per-frame minima),
-    which effectively hides low-outlier frames from the profile axis floor."""
+    """Sample a few frames spread across the run to derive the profile-plot
+    axis ceiling without holding the whole run in memory. vmax and the
+    profile floor are both fixed, cosmetic constants (see MOVIE_IMSHOW_VMAX)
+    rather than anything derived from data."""
     if not paths:
-        return {"vmax": 100.0,
+        return {"vmax": MOVIE_IMSHOW_VMAX,
                 "px_min": 0.0, "px_max": 1.0,
                 "py_min": 0.0, "py_max": 1.0}
     idxs = np.linspace(0, len(paths) - 1, num=min(n_sample, len(paths)), dtype=int)
@@ -359,15 +747,14 @@ def _sample_movie_stats(loader, paths, n_sample: int = MOVIE_SAMPLE_FRAMES) -> d
             continue
     if not samples:
         samples = [loader(paths[0])]
-    vmax = float(max(np.percentile(img, MOVIE_IMSHOW_VMAX_PERCENTILE) for img in samples))
     px_sums = [np.sum(img, axis=0) for img in samples]
     py_sums = [np.sum(img, axis=1) for img in samples]
     return {
-        "vmax":   vmax,
+        "vmax":   MOVIE_IMSHOW_VMAX,
         "px_max": float(max(p.max() for p in px_sums)),
-        "px_min": float(max(p.min() for p in px_sums)),  # max-of-mins, per dot_movie
+        "px_min": 0.0,
         "py_max": float(max(p.max() for p in py_sums)),
-        "py_min": float(max(p.min() for p in py_sums)),  # max-of-mins, per dot_movie
+        "py_min": 0.0,
     }
 
 
@@ -377,7 +764,7 @@ def _load_fits_frame(path) -> np.ndarray:
 
 
 def _load_image_frame(path) -> np.ndarray:
-    return np.array(Image.open(path).convert("L"))
+    return np.flip(np.array(Image.open(path).convert("L")), axis=(0, 1))
 
 
 def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | None = None) -> None:
@@ -425,10 +812,8 @@ def _write_movie(paths: list, loader, out_path: Path, timestamps: list[str] | No
     ax_y.set_xlabel("counts")
     ax_x.grid(True)
     ax_y.grid(True)
-    # dot_movie's exact "headroom" formula: subtract 200 from both x limits;
-    # subtract 200 from y-min only. Match verbatim for direct comparability.
-    ax_x.set_ylim(stats["px_min"] - 200, stats["px_max"] - 200)
-    ax_y.set_xlim(stats["py_min"] - 200, stats["py_max"])
+    ax_x.set_ylim(stats["px_min"], stats["px_max"])
+    ax_y.set_xlim(stats["py_min"], stats["py_max"])
 
     ts_text = ax_img.text(0.02, 0.98, "", transform=ax_img.transAxes,
                           color="white", fontsize=12, verticalalignment="top",
@@ -491,32 +876,218 @@ def _generate_movie_from_images(image_paths: list[Path], out_path: Path) -> None
 # Run discovery
 # ---------------------------------------------------------------------------
 
+def _run_output_names(runname: str) -> list[str]:
+    """Exact artifact filenames this pipeline writes for a run.
+
+    Listed explicitly rather than pattern-matched so the migration sweep can
+    never touch a camera frame that happens to have an unusual name."""
+    return [
+        f"{runname}_frames.csv",
+        f"{runname}_summary_reprocess.csv",
+        f"{runname}_reprocess.mp4",
+        f"{runname}_FFT_reprocess.png",
+        f"{runname}_FWHM_reprocess.png",
+        f"{runname}_position_reprocess.png",
+    ]
+
+
+def migrate_image_outputs(root: Path, apply: bool = False) -> int:
+    """Move image-run artifacts out of the frame folder and up into {date}/.
+
+    Image runs used to write their outputs into the same directory as the .bmp
+    frames. output_dir_for now puts them one level up, matching how FITS runs
+    (and dot_movie-Copy3) keep outputs beside the data rather than inside it.
+    This sweeps the leftovers from the old layout.
+
+    Where the new location already holds a copy, the stale one is deleted --
+    the parent copy was written by the current code. Otherwise the file moves.
+    Dry-run unless apply=True. Returns the number of files affected."""
+    moved = deleted = 0
+    for run_dir in _discover_image_runs(root):
+        dest_dir = output_dir_for(run_dir, is_image_run=True)
+        for name in _run_output_names(run_dir.name):
+            src = run_dir / name
+            if not src.exists():
+                continue
+            dest = dest_dir / name
+            if dest.exists():
+                print(f"  {'delete ' if apply else 'would delete '}{src}"
+                      f"\n      (superseded by {dest})")
+                if apply:
+                    src.unlink()
+                deleted += 1
+            else:
+                print(f"  {'move   ' if apply else 'would move   '}{src}\n      -> {dest}")
+                if apply:
+                    shutil.move(str(src), str(dest))
+                moved += 1
+
+    total = moved + deleted
+    if not total:
+        print("  nothing to migrate; image-run outputs are already in {date}/.")
+    else:
+        verb = "Migrated" if apply else "Would migrate"
+        print(f"\n  {verb} {total} file(s): {moved} moved, {deleted} deleted as superseded.")
+        if not apply:
+            print("  Re-run with --apply to perform it.")
+    return total
+
+
+def fits_dir_for(run_dir: Path) -> Path | None:
+    """The run's FITS folder, or None if it has not been converted.
+
+    The name must match the run folder exactly: {run}/{run}_fits. Both
+    process_fits_run implementations hardcode that same construction, so
+    accepting any *_fits here would discover runs the processor then cannot
+    read. A folder holding a *_fits subdir under some other name is reported by
+    discovery_anomalies() instead of being silently included or silently
+    dropped.
+    """
+    fits_dir = run_dir / f"{run_dir.name}_fits"
+    return fits_dir if fits_dir.is_dir() else None
+
+
+def _converted_run_names(root: Path, date: str) -> set[str]:
+    """Casefolded names of runs under {date}_data/ that have a FITS conversion.
+
+    Casefolded because {date}/bigShakeB and {date}_data/bigshakeB are the same
+    run recorded with different capitalisation. On Windows the two paths even
+    resolve to the same directory; on a case-sensitive filesystem they would
+    not, and the image copy would be reprocessed as if it were a separate run.
+    """
+    data_dir = root / (date + "_data")
+    if not data_dir.is_dir():
+        return set()
+    return {p.name.casefold() for p in data_dir.iterdir()
+            if p.is_dir() and fits_dir_for(p) is not None}
+
+
 def _discover_fits_runs(root: Path) -> list[Path]:
-    """Find run folders with a *_fits subfolder under *_data/ directories."""
+    """Find run folders with a matching {run}_fits subfolder under *_data/."""
     runs = []
     for data_dir in sorted(root.glob("*_data")):
         if not data_dir.is_dir():
             continue
         for run_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
-            fits_dir = run_dir / f"{run_dir.name}_fits"
-            if fits_dir.is_dir():
+            if fits_dir_for(run_dir) is not None:
                 runs.append(run_dir)
     return runs
 
 
 def _discover_image_runs(root: Path) -> list[Path]:
-    """Find run folders with BMP/PNG files under {date}/ dirs that have no {date}_data sibling."""
+    """Find BMP/PNG run folders under {date}/ that have no FITS conversion.
+
+    A {date}_data/ sibling means *some* of that date was converted to FITS, not
+    that all of it was. Skipping the whole date on the strength of that sibling
+    hides every run of that date which was never converted -- they are invisible
+    to both discovery paths and silently never processed. So exclude runs
+    one at a time, by whether that specific run has a FITS counterpart.
+    """
     runs = []
     for date_dir in sorted(root.iterdir()):
         if not date_dir.is_dir() or date_dir.name.endswith("_data"):
             continue
-        if (root / (date_dir.name + "_data")).exists():
-            continue
+        converted = _converted_run_names(root, date_dir.name)
         for run_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
-            images = list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png"))
-            if images:
+            if run_dir.name.casefold() in converted:
+                continue
+            if list_run_images(run_dir):
                 runs.append(run_dir)
     return runs
+
+
+def discovery_anomalies(root: Path) -> list[tuple[str, Path, str]]:
+    """Folders discovery deliberately does not process, and why.
+
+    Discovery skipping something is only safe if the skip is visible. Each entry
+    is (kind, path, detail):
+
+      mismatched_fits  a folder under *_data/ holding a *_fits subdir named for
+                       a different run. Not processed: process_fits_run builds
+                       {run}/{run}_fits, so the name has to match. Usually a
+                       duplicate or a rename, but discovery cannot tell which,
+                       and processing it blind would either fail or double-count
+                       a run that already processed under its real name.
+      no_fits          a folder under *_data/ with no *_fits subdir at all.
+                       Normally just an output folder; listed for completeness.
+      case_mismatch    an image run and its FITS counterpart whose names differ
+                       only by capitalisation. Handled correctly, but it is the
+                       one difference that a case-sensitive filesystem would
+                       turn into a duplicated run.
+      partial_conversion
+                       a run whose FITS folder holds fewer frames than its image
+                       folder. FITS is preferred, so the extra images are not
+                       processed. Both known cases are a truncated tail from a
+                       conversion that stopped early, not scattered loss, but
+                       the frames are real and are being dropped.
+      stale_mirror     a *_frames.csv sitting in the image tree for a run that
+                       is processed from FITS. No run rewrites it, so it holds
+                       whatever the last image-based pass produced -- possibly
+                       output from a build predating the current fit.
+    """
+    out: list[tuple[str, Path, str]] = []
+
+    for data_dir in sorted(root.glob("*_data")):
+        if not data_dir.is_dir():
+            continue
+        for run_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
+            if fits_dir_for(run_dir) is not None:
+                continue
+            others = sorted(p for p in run_dir.iterdir()
+                            if p.is_dir() and p.name.endswith("_fits"))
+            if others:
+                n = len(list(others[0].glob("*.fits")))
+                out.append(("mismatched_fits", run_dir,
+                            f"holds {others[0].name}/ ({n} .fits), "
+                            f"expected {run_dir.name}_fits/"))
+            else:
+                out.append(("no_fits", run_dir, "no *_fits subfolder"))
+
+    for date_dir in sorted(root.iterdir()):
+        if not date_dir.is_dir() or date_dir.name.endswith("_data"):
+            continue
+        data_dir = root / (date_dir.name + "_data")
+        if not data_dir.is_dir():
+            continue
+        by_fold = {p.name.casefold(): p.name for p in data_dir.iterdir() if p.is_dir()}
+        converted = _converted_run_names(root, date_dir.name)
+        for run_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
+            fold = run_dir.name.casefold()
+            if fold not in converted:
+                continue
+            if by_fold.get(fold) != run_dir.name:
+                out.append(("case_mismatch", run_dir,
+                            f"FITS counterpart is named {by_fold[fold]!r}"))
+
+            fdir = fits_dir_for(data_dir / by_fold[fold])
+            n_img = len(list_run_images(run_dir))
+            n_fits = len(list(fdir.glob("*.fits"))) if fdir else 0
+            if n_img > n_fits:
+                out.append(("partial_conversion", run_dir,
+                            f"{n_img} images but {n_fits} FITS; "
+                            f"{n_img - n_fits} frame(s) not processed"))
+
+            csv = run_dir / f"{run_dir.name}_frames.csv"
+            if csv.exists():
+                out.append(("stale_mirror", csv,
+                            "run is processed from FITS; this copy is never rewritten"))
+
+    return out
+
+
+def print_discovery_anomalies(root: Path) -> int:
+    """Print discovery_anomalies(); returns how many were found."""
+    found = discovery_anomalies(root)
+    if not found:
+        return 0
+    print(f"\n  {len(found)} folder(s) discovery is skipping:")
+    for kind, path, detail in found:
+        try:
+            shown = path.relative_to(root)
+        except ValueError:
+            shown = path
+        print(f"    [{kind}] {shown}\n        {detail}")
+    return len(found)
 
 
 # ---------------------------------------------------------------------------
@@ -528,18 +1099,21 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
     """Process one FITS run folder. Returns a stats dict."""
     runname = run_dir.name
     fits_dir = run_dir / f"{runname}_fits"
-    out_csv = run_dir / f"{runname}_frames.csv"
+    out_dir = output_dir_for(run_dir, is_image_run=False)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(fits_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(fits_dir), "out_csv": str(out_csv),
         "n_files": 0, "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
-    files = sorted(glob.glob(str(fits_dir / "*.fits")))
+    files = sorted(glob.glob(str(fits_dir / "*.fits")),
+                   key=lambda p: (_extract_frame_num(p), p))
     stats["n_files"] = len(files)
     if not files:
         return stats
@@ -569,17 +1143,17 @@ def process_fits_run(run_dir: Path, make_plots: bool = True,
                 f.cancel()
             raise
 
-    df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
+    df = _order_frames(pd.DataFrame(results))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
 
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_dir, run_dir, runname)
     if make_movie:
-        _generate_movie_from_fits(files, run_dir / f"{runname}_reprocess.mp4")
+        _generate_movie_from_fits(files, out_dir / f"{runname}_reprocess.mp4")
 
     return stats
 
@@ -588,14 +1162,13 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                       make_movie: bool = True) -> dict:
     """Process one BMP/PNG run folder (no FITS conversion). Returns a stats dict."""
     runname = run_dir.name
-    images = sorted(
-        list(run_dir.glob("*.bmp")) + list(run_dir.glob("*.png")),
-        key=lambda p: p.name,
-    )
-    out_csv = run_dir / f"{runname}_frames.csv"
+    images = list_run_images(run_dir)
+    out_dir = output_dir_for(run_dir, is_image_run=True)
+    out_csv = out_dir / f"{runname}_frames.csv"
 
     stats = {
-        "runname": runname, "source": str(run_dir), "out_csv": str(out_csv),
+        "runname": runname, "run_key": run_key(run_dir),
+        "source": str(run_dir), "out_csv": str(out_csv),
         "n_files": len(images), "n_ok": 0, "elapsed_s": 0.0,
         "camera": _detect_camera(runname), "shape": "",
     }
@@ -604,7 +1177,7 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
         return stats
 
     if out_csv.exists():
-        _mirror(out_csv, f"{runname}_frames_prev.csv")
+        _mirror_for_run(out_csv, run_dir, "_frames_prev.csv")
 
     try:
         arr = np.array(Image.open(images[0]).convert("L"))
@@ -633,17 +1206,17 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
                 f.cancel()
             raise
 
-    df = pd.DataFrame(results).sort_values("frame_num").reset_index(drop=True)
+    df = _order_frames(pd.DataFrame(results))
     _write_frames_csv(df, out_csv)
-    _mirror(out_csv, f"{runname}_frames.csv")
+    _mirror_for_run(out_csv, run_dir)
 
     stats["n_ok"] = int(df["fit_ok"].sum())
     stats["elapsed_s"] = time.time() - t0
 
     if make_plots:
-        _generate_plots_and_summary(out_csv, run_dir, runname)
+        _generate_plots_and_summary(out_csv, out_dir, run_dir, runname)
     if make_movie:
-        _generate_movie_from_images(images, run_dir / f"{runname}_reprocess.mp4")
+        _generate_movie_from_images(images, out_dir / f"{runname}_reprocess.mp4")
 
     return stats
 
@@ -651,6 +1224,21 @@ def process_image_run(run_dir: Path, make_plots: bool = True,
 # ---------------------------------------------------------------------------
 # Summaries and pixel scales
 # ---------------------------------------------------------------------------
+
+def _artifact_run_key(path: Path, suffix: str) -> tuple[str, str]:
+    """(run_key, runname) for a collected artifact named {runname}{suffix}.
+
+    Handles both output layouts. A FITS run's artifacts sit inside the run dir
+    ({date}_data/{runname}/), while an image run's sit one level up in {date}/.
+    The runname always comes from the filename, so it is right either way; only
+    where to find the date differs."""
+    runname = path.name[: -len(suffix)]
+    parent = path.parent
+    date = date_prefix(parent) if parent.name == runname else parent.name
+    if date.endswith("_data"):
+        date = date[: -len("_data")]
+    return f"{date}_{runname}", runname
+
 
 def _collect_summaries(root: Path) -> None:
     """Collect all dot_movie-style *_summary.csv truth files into OUTPUT_DIR.
@@ -662,9 +1250,13 @@ def _collect_summaries(root: Path) -> None:
             continue
         try:
             df = pd.read_csv(p)
+            key, runname = _artifact_run_key(p, "_summary.csv")
             if "runname" not in df.columns:
-                df.insert(0, "runname", p.parent.name)
-            _mirror(p, f"{p.parent.name}_summary.csv")
+                df.insert(0, "runname", runname)
+            # runname alone is ambiguous across dates; stamp the unique key so
+            # the concatenated file can distinguish same-named runs.
+            df.insert(0, "run_key", key)
+            _mirror(p, f"{key}_summary.csv")
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -683,8 +1275,10 @@ def _collect_reprocess_summaries(root: Path) -> None:
     for p in sorted(root.rglob("*_summary_reprocess.csv")):
         try:
             df = pd.read_csv(p)
+            key, runname = _artifact_run_key(p, "_summary_reprocess.csv")
             if "runname" not in df.columns:
-                df.insert(0, "runname", p.parent.name)
+                df.insert(0, "runname", runname)
+            df.insert(0, "run_key", key)
             frames.append(df)
         except Exception as exc:
             print(f"  warning: could not read {p}: {exc}")
@@ -696,8 +1290,8 @@ def _collect_reprocess_summaries(root: Path) -> None:
     print(f"  collected {len(frames)} reprocess summary CSV(s) -> {out_path}")
 
 
-_TIMING_FIELDNAMES = ["batch_timestamp", "runname", "camera", "n_files", "n_ok",
-                      "elapsed_s", "fps", "source"]
+_TIMING_FIELDNAMES = ["batch_timestamp", "run_key", "runname", "camera",
+                      "n_files", "n_ok", "elapsed_s", "fps", "source"]
 
 
 def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None:
@@ -730,6 +1324,7 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
         fps = s["n_files"] / max(s["elapsed_s"], 1e-9) if s["n_files"] > 0 else 0.0
         new_rows.append({
             "batch_timestamp": batch_ts,
+            "run_key":   s.get("run_key", ""),
             "runname":   s["runname"],
             "camera":    s["camera"],
             "n_files":   s["n_files"],
@@ -739,14 +1334,53 @@ def write_timing_summary(stats_list: list[dict], grand_elapsed_s: float) -> None
             "source":    s["source"],
         })
 
-    total_files = sum(s["n_files"] for s in stats_list)
-    total_ok = sum(s["n_ok"] for s in stats_list)
-    overall_fps = total_files / max(grand_elapsed_s, 1e-9)
+    # _TOTAL_ must cover every run currently on record, not just this batch --
+    # a --run-filtered invocation only fills stats_list with the matched runs,
+    # so summing stats_list alone silently drops every historical row's
+    # contribution (see 2026-09-16 run_timings.csv regression: partial batch
+    # made totals collapse even though it added two of the largest runs on
+    # record).
+    #
+    # This file is an append-only log -- reprocessing the same run again adds
+    # another row rather than replacing the old one (20251023_nightdriftB has
+    # 5 entries as of 2026-09-16), so summing every row would multiply that
+    # run's frames/time into the total once per rerun. Dedupe to the latest
+    # entry per run first. run_key is the natural key, but rows written before
+    # that column existed are blank there. Falling back to plain runname+source
+    # was tried and is wrong: a run reprocessed both before and after run_key
+    # was added keeps the same source path in both eras, so the pre- and
+    # post-run_key rows for the SAME run land under two different fallback
+    # keys and both survive dedup -- exactly the double count this is trying
+    # to avoid (verified against the 2026-09-16 run: it inflated 553,382 real
+    # files to 1,068,408). Recover the same key those rows would have gotten
+    # by extracting the run's date from `source` -- every source path embeds
+    # an 8-digit YYYYMMDD folder regardless of which drive/root era wrote it
+    # -- so it collapses onto the real run_key format ("{date}_{runname}").
+    def _num(v, cast):
+        try:
+            return cast(v)
+        except (TypeError, ValueError):
+            return cast(0)
+
+    def _dedup_key(row):
+        if row["run_key"]:
+            return row["run_key"]
+        m = re.search(r"(20\d{6})", row["source"])
+        return f"{m.group(1)}_{row['runname']}" if m else f"{row['runname']}|{row['source']}"
+
+    latest_per_run: dict[str, dict] = {}
+    for r in existing_rows + new_rows:
+        latest_per_run[_dedup_key(r)] = r  # later rows overwrite earlier ones
+
+    total_files = sum(_num(r["n_files"], int) for r in latest_per_run.values())
+    total_ok = sum(_num(r["n_ok"], int) for r in latest_per_run.values())
+    total_elapsed = sum(_num(r["elapsed_s"], float) for r in latest_per_run.values())
+    overall_fps = total_files / max(total_elapsed, 1e-9)
     total_row = {
         "batch_timestamp": batch_ts,
-        "runname": "_TOTAL_", "camera": "",
+        "run_key": "", "runname": "_TOTAL_", "camera": "",
         "n_files": total_files, "n_ok": total_ok,
-        "elapsed_s": round(grand_elapsed_s, 2),
+        "elapsed_s": round(total_elapsed, 2),
         "fps": round(overall_fps, 1),
         "source": "",
     }
@@ -769,23 +1403,29 @@ def write_pixel_scales(stats_list: list[dict]) -> None:
     (the underlying data may have changed shape between runs). User-filled fields
     (pixel_scale_arcsec_per_pixel, notes) are preserved even for current-batch runs.
     Runs NOT in the current batch are kept exactly as they were."""
-    fieldnames = ["runname", "camera", "image_shape",
+    fieldnames = ["run_key", "runname", "camera", "image_shape",
                   "pixel_scale_arcsec_per_pixel", "notes"]
     rows: dict[str, dict] = {}
     if PIXEL_SCALES_PATH.exists():
         try:
             with open(PIXEL_SCALES_PATH, newline="") as f:
                 for row in csv.DictReader(f):
-                    runname = row.get("runname")
-                    if not runname:
+                    # Rows written before run_key existed are keyed on the bare
+                    # runname. Keep them under that key so nothing the user typed
+                    # is lost; they are superseded once that run is processed again.
+                    key = row.get("run_key") or row.get("runname")
+                    if not key:
                         continue
-                    rows[runname] = {k: row.get(k, "") for k in fieldnames}
+                    rows[key] = {k: row.get(k, "") for k in fieldnames}
         except Exception as e:
             print(f"  warning: could not read existing pixel_scales.csv: {e}")
 
     for s in stats_list:
-        prev = rows.get(s["runname"], {})
-        rows[s["runname"]] = {
+        key = s.get("run_key") or s["runname"]
+        # Carry over anything the user filled in under the pre-run_key name.
+        prev = rows.get(key) or rows.pop(s["runname"], {})
+        rows[key] = {
+            "run_key": key,
             "runname": s["runname"],
             "camera": s["camera"] or prev.get("camera", ""),
             "image_shape": s["shape"] or prev.get("image_shape", ""),
@@ -796,8 +1436,8 @@ def write_pixel_scales(stats_list: list[dict]) -> None:
     with open(PIXEL_SCALES_PATH, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        for runname in sorted(rows):
-            w.writerow(rows[runname])
+        for key in sorted(rows):
+            w.writerow(rows[key])
     print(f"  pixel_scales.csv updated ({len(rows)} unique runs preserved) "
           f"-> {PIXEL_SCALES_PATH}")
 
@@ -815,6 +1455,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip csv_to_dotplots plots + summary (default: on)")
     parser.add_argument("--no-movie", action="store_true",
                         help="skip .mp4 movie generation (default: on)")
+    parser.add_argument("--migrate-image-outputs", action="store_true",
+                        help="move image-run artifacts out of the frame folder up "
+                             "into {date}/, then exit (dry-run unless --apply)")
+    parser.add_argument("--apply", action="store_true",
+                        help="with --migrate-image-outputs, actually move/delete files")
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -823,6 +1468,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    if args.migrate_image_outputs:
+        migrate_image_outputs(root, apply=args.apply)
+        return 0
 
     fits_runs = _discover_fits_runs(root)
     image_runs = _discover_image_runs(root)
@@ -836,6 +1485,7 @@ def main(argv: list[str] | None = None) -> int:
 
     total = len(fits_runs) + len(image_runs)
     print(f"Discovered {len(fits_runs)} FITS run(s) and {len(image_runs)} image run(s) under {root}.")
+    print_discovery_anomalies(root)
 
     if args.dry_run:
         for r in fits_runs:
